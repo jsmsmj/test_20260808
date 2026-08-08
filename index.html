@@ -145,23 +145,6 @@
     font-size: 13px;
     z-index: 6;
   }
-  /* iPhone実機でコインSEが鳴らないことがある問題の切り分け用。Web Inspector無しでも
-     画面上でエラー内容が見えるようにするための一時的なデバッグ表示(2026-08-08 追加) */
-  #se-debug {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    max-width: calc(100% - 20px);
-    color: #ffeb3b;
-    background: rgba(0, 0, 0, 0.6);
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 11px;
-    line-height: 1.4;
-    white-space: pre-line;
-    z-index: 6;
-  }
   #hud {
     position: absolute;
     top: 10px;
@@ -411,7 +394,6 @@
 <!--
     <div id="dog-debug">画面内の犬: <span id="dogDebugActual">0</span> / 目標<span id="dogDebugTarget">0</span></div>
 -->
-    <div id="se-debug"></div>
     <div id="life-hud">
       <div id="life-bar-track"><div id="life-bar-fill"></div></div>
 <!--
@@ -484,16 +466,6 @@
   const introOverlayEl = document.getElementById('intro-overlay');
   const introDogIconEl = document.getElementById('intro-icon-dog');
   const introCoinIconEl = document.getElementById('intro-icon-coin');
-  const seDebugEl = document.getElementById('se-debug');
-
-  // iPhone実機でコインSEが鳴らないことがある問題の切り分け用。Web Inspectorが無くても
-  // 画面上でログが見られるように、直近数件のSE再生試行/エラーを表示しておく(2026-08-08 追加)
-  const seDebugLines = [];
-  function logSEDebug(line) {
-    seDebugLines.push(`${(performance.now() / 1000).toFixed(1)}s ${line}`);
-    if (seDebugLines.length > 8) seDebugLines.shift();
-    seDebugEl.textContent = seDebugLines.join('\n');
-  }
 
   // --- 論理解像度を初回起動時のウィンドウサイズに固定し、以降のリサイズは拡大縮小のみで対応する ---
   const BASE_W = 800;
@@ -603,7 +575,8 @@
   // (`Howler.autoUnlock`、デフォルトtrue)ため、自前のアンロック処理より取りこぼしが少ない。
   // 同じ音の重ね鳴りもHowlの`play()`が内部で管理してくれるので、プール管理も不要になった
   const SE_DOG_SRCS = [
-    'SE/dog01.mp3', 'SE/dog02.mp3',
+    'SE/dog01.mp3', 'SE/dog02.mp3', 'SE/dog03.mp3', 'SE/dog04.mp3',
+    'SE/dog05.mp3', 'SE/dog06.mp3', 'SE/dog07.mp3', 'SE/dog08.mp3',
     // 犬が多い時の処理落ちの原因がSE再生自体(cloneNode+play())だったため、
     // updateDogs()側の呼び出しをコメントアウトして現在無効化している(2026-08-08)
   ];
@@ -613,15 +586,12 @@
   const DOG_SE_VOLUME = 0.07; // 犬の鳴き声の音量(0〜1)
   const COIN_SE_VOLUME = 0.9; // コイン獲得音の音量(0〜1)
 
-  function createSEHowl(src, volume, label) {
-    const howl = new Howl({ src: [src], volume });
-    howl.on('playerror', (id, err) => logSEDebug(`NG ${label}: ${err}`));
-    howl.on('play', () => logSEDebug(`OK ${label}`));
-    return howl;
+  function createSEHowl(src, volume) {
+    return new Howl({ src: [src], volume });
   }
 
-  const seDogHowls = SE_DOG_SRCS.map((src) => createSEHowl(src, DOG_SE_VOLUME, src.split('/').pop()));
-  const seCoinHowl = createSEHowl(SE_COIN_SRC, COIN_SE_VOLUME, 'coin.mp3');
+  const seDogHowls = SE_DOG_SRCS.map((src) => createSEHowl(src, DOG_SE_VOLUME));
+  const seCoinHowl = createSEHowl(SE_COIN_SRC, COIN_SE_VOLUME);
 
   let lastDogSEIndex = -1;
   let lastDogSEAt = -Infinity;
@@ -764,7 +734,7 @@
   // 0〜50mでMIN_DOGS→MAX_DOGSへ直線的に増加、50mを超えたところでMIN_DOGSまで一気に落ち着き、
   // また次の50m(51〜100m)で同じように増加…を繰り返す(DOG_CYCLE_LENGTH_M周期)。
   const MIN_DOGS = 3;
-  const MAX_DOGS = 35;
+  const MAX_DOGS = 30;
   const DOG_CYCLE_LENGTH_M = 50;
   const SAFE_DISTANCE_PX = 300; // スタート直後は犬を出現させない距離
 
@@ -842,8 +812,7 @@
       if (wrapped) {
         // 画面の端から犬が現れた瞬間。実際に見えている(画面内の縦位置にいる)時だけ鳴らす
         const screenY = dog.baseWorldY + dog.yOffset - camera.top;
-        // iPhoneでの処理落ちの原因切り分けのため、犬のSE再生を一時的に無効化(2026-08-08)
-        // if (screenY > -dogFrameH && screenY < BASE_H + dogFrameH) playDogSE();
+        if (screenY > -dogFrameH && screenY < BASE_H + dogFrameH) playDogSE();
       }
 
       dog.bobPhase += dt * dog.bobFreq;
