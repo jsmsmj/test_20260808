@@ -144,6 +144,23 @@
     font-size: 13px;
     z-index: 6;
   }
+  /* iPhone実機でコインSEが鳴らないことがある問題の切り分け用。Web Inspector無しでも
+     画面上でエラー内容が見えるようにするための一時的なデバッグ表示(2026-08-08 追加) */
+  #se-debug {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    max-width: calc(100% - 20px);
+    color: #ffeb3b;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-line;
+    z-index: 6;
+  }
   #hud {
     position: absolute;
     top: 10px;
@@ -393,6 +410,7 @@
 <!--
     <div id="dog-debug">画面内の犬: <span id="dogDebugActual">0</span> / 目標<span id="dogDebugTarget">0</span></div>
 -->
+    <div id="se-debug"></div>
     <div id="life-hud">
       <div id="life-bar-track"><div id="life-bar-fill"></div></div>
 <!--
@@ -465,6 +483,16 @@
   const introOverlayEl = document.getElementById('intro-overlay');
   const introDogIconEl = document.getElementById('intro-icon-dog');
   const introCoinIconEl = document.getElementById('intro-icon-coin');
+  const seDebugEl = document.getElementById('se-debug');
+
+  // iPhone実機でコインSEが鳴らないことがある問題の切り分け用。Web Inspectorが無くても
+  // 画面上でログが見られるように、直近数件のSE再生試行/エラーを表示しておく(2026-08-08 追加)
+  const seDebugLines = [];
+  function logSEDebug(line) {
+    seDebugLines.push(`${(performance.now() / 1000).toFixed(1)}s ${line}`);
+    if (seDebugLines.length > 8) seDebugLines.shift();
+    seDebugEl.textContent = seDebugLines.join('\n');
+  }
 
   // --- 論理解像度を初回起動時のウィンドウサイズに固定し、以降のリサイズは拡大縮小のみで対応する ---
   const BASE_W = 800;
@@ -505,7 +533,7 @@
   }
   handleResize();
 
-  const speed = 150; // px/sec
+  const speed = 200; // px/sec
   const JOYSTICK_SPEED_MULTIPLIER = 1.1; // 仮想ジョイスティック操作時は移動速度を+10%する
 
   // --- キーボード(WASD)入力 ---
@@ -593,8 +621,11 @@
   function playSE(baseAudio) {
     const node = baseAudio.cloneNode();
     node.volume = baseAudio.volume; // cloneNode()はvolumeプロパティを引き継がないことがあるため明示的にコピーする
+    const label = baseAudio.src.split('/').pop();
     // ユーザー操作前の自動再生ブロックなどで失敗することがあるが、ゲーム進行には影響しないので無視する
-    node.play().catch(() => {});
+    node.play()
+      .then(() => logSEDebug(`OK ${label}`))
+      .catch((err) => logSEDebug(`NG ${label}: ${err.name} ${err.message}`));
   }
 
   let lastDogSEIndex = -1;
@@ -621,7 +652,7 @@
 
   // --- BGM ---
   const BGM_SRC = 'SE/iwashiro_kokage_biyori.mp3';
-  const BGM_VOLUME = 0.2; // BGMの音量(0〜1)
+  const BGM_VOLUME = 0.15; // BGMの音量(0〜1)
 
   const bgmAudio = new Audio(BGM_SRC);
   bgmAudio.loop = true;
@@ -737,10 +768,10 @@
   // --- 犬(障害物)の数は進んだ距離に応じてノコギリ波状に増減する ---
   // 0〜50mでMIN_DOGS→MAX_DOGSへ直線的に増加、50mを超えたところでMIN_DOGSまで一気に落ち着き、
   // また次の50m(51〜100m)で同じように増加…を繰り返す(DOG_CYCLE_LENGTH_M周期)。
-  const MIN_DOGS = 10;
+  const MIN_DOGS = 3;
   const MAX_DOGS = 35;
   const DOG_CYCLE_LENGTH_M = 50;
-  const SAFE_DISTANCE_PX = 420; // スタート直後は犬を出現させない距離
+  const SAFE_DISTANCE_PX = 300; // スタート直後は犬を出現させない距離
 
   let dogs = [];
 
@@ -753,7 +784,7 @@
   // 犬1匹分の状態を(再)初期化する。カメラより先の未表示エリアに配置し直すことで使い回す
   function resetDog(dog, camTop, distanceM) {
     dog.dir = Math.random() < 0.5 ? 1 : -1;
-    const speedBase = 260 + Math.min(140, distanceM * 0.8);
+    const speedBase = 100 + Math.min(140, distanceM * 0.8);
     dog.speed = speedBase + Math.random() * 120;
     dog.worldX = Math.random() * BASE_W;
     const forwardEdge = Math.min(camTop, -SAFE_DISTANCE_PX);
