@@ -151,13 +151,13 @@
     color: #fff;
     text-shadow: 0 1px 3px rgba(0,0,0,0.6);
     font-family: sans-serif;
-    font-size: 18px;
+    font-size: 36px; /* 2026-08-08: 18pxから2倍に拡大(文字が全体的に小さいという指摘のため) */
     font-weight: bold;
     text-align: right;
     z-index: 6;
   }
   #hud .best {
-    font-size: 13px;
+    font-size: 26px; /* 2026-08-08: 13pxから2倍に拡大 */
     font-weight: normal;
     opacity: 0.85;
   }
@@ -390,7 +390,9 @@
 <!--
     <div id="hint">WASD / 画面左下ドラッグで移動・奥(上)へ進もう。犬にぶつかるとミス!</div>
 -->
+<!--
     <div id="dog-debug">画面内の犬: <span id="dogDebugActual">0</span> / 目標<span id="dogDebugTarget">0</span></div>
+-->
     <div id="life-hud">
       <div id="life-bar-track"><div id="life-bar-fill"></div></div>
 <!--
@@ -488,6 +490,19 @@
     checkOrientation();
   }
   window.addEventListener('resize', handleResize);
+  // iOS Safariは回転直後、window.innerWidth/innerHeightがアドレスバー等の
+  // レイアウト確定前の古い値を一瞬返すことがあり、resizeイベント1回分の計算だけだと
+  // 「縦→横に戻すとゲーム画面が縮んだまま」になることがある(実機フィードバックで発覚)。
+  // orientationchange後、少し時間を置いて複数回再計算することで最終的な正しいサイズに追従させる
+  window.addEventListener('orientationchange', () => {
+    handleResize();
+    setTimeout(handleResize, 100);
+    setTimeout(handleResize, 300);
+    setTimeout(handleResize, 600);
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', handleResize);
+  }
   handleResize();
 
   const speed = 150; // px/sec
@@ -632,7 +647,7 @@
   const DOG_KEY_COLOR = { r: 63, g: 200, b: 144 }; // 元画像の背景色
   const DOG_KEY_THRESHOLD = 60;
   const DOG_KEY_FEATHER = 40;
-  const DOG_SCALE = 0.3; // 犬の大きさは常に一定
+  const DOG_SCALE = 0.4; // 犬の大きさは常に一定
 
   function loadImage(src) {
     return new Promise((resolve, reject) => {
@@ -723,7 +738,7 @@
   // 0〜50mでMIN_DOGS→MAX_DOGSへ直線的に増加、50mを超えたところでMIN_DOGSまで一気に落ち着き、
   // また次の50m(51〜100m)で同じように増加…を繰り返す(DOG_CYCLE_LENGTH_M周期)。
   const MIN_DOGS = 10;
-  const MAX_DOGS = 50;
+  const MAX_DOGS = 35;
   const DOG_CYCLE_LENGTH_M = 50;
   const SAFE_DISTANCE_PX = 420; // スタート直後は犬を出現させない距離
 
@@ -1121,11 +1136,11 @@
     const screenY = p.y - camera.top;
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.font = 'bold 22px sans-serif';
+    ctx.font = 'bold 44px sans-serif'; // 2026-08-08: 22pxから2倍に拡大(文字が小さいという指摘のため)
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 7;
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.strokeText(p.text, p.x, screenY);
     ctx.fillStyle = p.color;
@@ -1546,8 +1561,9 @@
     daynightOverlayEl.style.opacity = computeDuskAmount(distanceM) * DUSK_MAX_OPACITY;
     ensureDogPopulation(distanceM, camera.top);
     updateDogs(dt, distanceM);
-    dogDebugActualEl.textContent = dogs.filter((d) => isDogOnScreen(d, camera.top)).length;
-    dogDebugTargetEl.textContent = targetDogCount(distanceM);
+    // デバッグ用の画面内犬数表示は不要になったのでコメントアウト(2026-08-08)
+    // dogDebugActualEl.textContent = dogs.filter((d) => isDogOnScreen(d, camera.top)).length;
+    // dogDebugTargetEl.textContent = targetDogCount(distanceM);
     updateMissFX(dt);
     updatePopups(dt);
     ensureCoinPopulation(camera.top);
