@@ -14,6 +14,15 @@
     overflow: hidden;
     background: #7ec850;
     touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none; /* iOSで長押し時にテキスト/画像選択の虫眼鏡・コピーメニューが出るのを防ぐ */
+    -webkit-tap-highlight-color: transparent; /* タップ時の水色ハイライトを消す */
+  }
+  canvas, #player {
+    -webkit-user-drag: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
   #viewport {
     position: relative;
@@ -72,7 +81,7 @@
     pointer-events: none;
     z-index: 5;
   }
-  /* スマホでジョイスティックを認識する範囲(左下エリア)。デバッグ用に薄く表示
+  /* スマホでジョイスティックを認識する範囲(左下エリア)。操作可能な範囲だと分かる程度に薄く表示
      #game(scaleで縮小される)ではなく#viewport直下に置き、実画面のピクセルサイズで
      操作範囲・ジョイスティック自体の見た目サイズが確保されるようにしている */
   #joystick-zone {
@@ -81,8 +90,35 @@
     bottom: 0;
     width: 50%;
     height: 50%;
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.05);
     z-index: 50;
+  }
+  /* 常時表示しておく操作ヒント用のジョイスティック絵(見た目だけ、タッチは通過させる)。
+     実際のジョイスティックはnipplejsのdynamicモードのまま(触れた場所が中心になる)なので、
+     操作を始めた瞬間(nipplejsの'start')にこちらは隠し、離したら('end')また表示し直す */
+  #joystick-hint {
+    position: absolute;
+    left: 15%;
+    bottom: 15%;
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.4);
+    pointer-events: none;
+  }
+  #joystick-hint::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 42px;
+    height: 42px;
+    margin: -21px 0 0 -21px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+  }
+  #joystick-hint.hide {
+    display: none;
   }
   #hint {
     position: absolute;
@@ -275,6 +311,74 @@
     0%, 100% { transform: rotate(0deg); }
     50% { transform: rotate(90deg); }
   }
+  /* 初回起動時の遊び方説明。#game(scaleで縮小される)の外側、#viewport基準で全画面に出すことで
+     #gameが小さい端末でも文字が縮小されず読みやすいままにしている */
+  #intro-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.78);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: sans-serif;
+    text-align: center;
+    padding: 20px;
+    box-sizing: border-box;
+    z-index: 90;
+    transition: opacity 0.2s ease;
+  }
+  #intro-overlay.hide {
+    display: none;
+  }
+  #intro-overlay .intro-title {
+    font-size: 22px;
+    font-weight: bold;
+    margin-bottom: 4px;
+  }
+  #intro-overlay .intro-goal {
+    font-size: 14px;
+    font-weight: bold;
+    color: #ffd54f;
+    margin-bottom: 16px;
+  }
+  #intro-overlay .intro-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: min(320px, 86vw);
+    margin: 6px 0;
+    text-align: left;
+  }
+  #intro-overlay .intro-icon {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    object-fit: contain; /* imgタグ(風船)がアスペクト比を保ったまま34x34に収まるように */
+  }
+  #intro-overlay .intro-icon.intro-player-dot {
+    /* 実際の#playerと同じ配色・比率のミニチュア(自機の紹介用) */
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #ffca28;
+    border: 3px solid #6d4c00;
+    box-sizing: border-box;
+  }
+  #intro-overlay .intro-text {
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+  #intro-overlay .tap-hint {
+    margin-top: 18px;
+    font-size: 14px;
+    opacity: 0.9;
+  }
 </style>
 </head>
 <body>
@@ -303,10 +407,37 @@
     </div>
     <div id="daynight-overlay"></div>
   </div>
-  <div id="joystick-zone"></div>
+  <div id="joystick-zone">
+    <div id="joystick-hint"></div>
+  </div>
   <div id="rotate-overlay">
     <div class="rotate-icon">📱</div>
     <div class="rotate-text">画面を横向きにしてください</div>
+  </div>
+  <div id="intro-overlay">
+    <span class="intro-title">あそびかた</span>
+    <span class="intro-goal">奥(画面上)へ進んでコインを集めよう!</span>
+    <div class="intro-row">
+      <span class="intro-icon intro-player-dot"></span>
+      <span class="intro-text">これがあなたの自機</span>
+    </div>
+    <div class="intro-row">
+      <span class="intro-icon">🕹️</span>
+      <span class="intro-text">仮想ジョイパッド or WASDキーで自機を操作</span>
+    </div>
+    <div class="intro-row">
+      <canvas id="intro-icon-dog" class="intro-icon"></canvas>
+      <span class="intro-text">犬にぶつかると愛情表現でライフが減る。ライフが0になるとゲームオーバー</span>
+    </div>
+    <div class="intro-row">
+      <canvas id="intro-icon-coin" class="intro-icon"></canvas>
+      <span class="intro-text">コインを集めよう</span>
+    </div>
+    <div class="intro-row">
+      <img src="imgs/balloon-red.png" class="intro-icon" alt="balloon">
+      <span class="intro-text">風船はお助けアイテム(ライフ回復 or コインばらまき)</span>
+    </div>
+    <span class="tap-hint">タップ or WASDでスタート</span>
   </div>
 </div>
 
@@ -329,6 +460,9 @@
   const dogDebugTargetEl = document.getElementById('dogDebugTarget');
   const daynightOverlayEl = document.getElementById('daynight-overlay');
   const rotateOverlayEl = document.getElementById('rotate-overlay');
+  const introOverlayEl = document.getElementById('intro-overlay');
+  const introDogIconEl = document.getElementById('intro-icon-dog');
+  const introCoinIconEl = document.getElementById('intro-icon-coin');
 
   // --- 論理解像度を初回起動時のウィンドウサイズに固定し、以降のリサイズは拡大縮小のみで対応する ---
   const BASE_W = 800;
@@ -357,6 +491,7 @@
   handleResize();
 
   const speed = 150; // px/sec
+  const JOYSTICK_SPEED_MULTIPLIER = 1.1; // 仮想ジョイスティック操作時は移動速度を+10%する
 
   // --- キーボード(WASD)入力 ---
   const keys = { w: false, a: false, s: false, d: false };
@@ -366,6 +501,7 @@
     const k = e.key.toLowerCase();
     if (!(k in keys)) return;
     keys[k] = true;
+    dismissIntro();
     // ミス直後に押しっぱなしだったキーでは再開しない。離して押し直した時だけ再開を試みる
     if (!e.repeat && !staleKeysAtMiss.has(k)) tryResume();
   });
@@ -397,6 +533,11 @@
 
   let joyVector = { x: 0, y: 0 };
 
+  const joystickHintEl = document.getElementById('joystick-hint');
+  manager.on('start', () => {
+    // 操作中は常時表示用のヒント絵とnipplejs本体のジョイスティックが重なって見えるので、操作中だけヒントを隠す
+    joystickHintEl.classList.add('hide');
+  });
   manager.on('move', (evt, data) => {
     startBGM();
     if (data.vector) {
@@ -407,12 +548,14 @@
   });
   manager.on('end', () => {
     joyVector = { x: 0, y: 0 };
+    joystickHintEl.classList.remove('hide');
   });
 
   // --- 効果音(SE) ---
   const SE_DOG_SRCS = [
-    'SE/dog01.mp3', 'SE/dog02.mp3', 'SE/dog03.mp3', 'SE/dog04.mp3',
-    'SE/dog05.mp3', 'SE/dog06.mp3', 'SE/dog07.mp3', 'SE/dog08.mp3',
+    'SE/dog01.mp3', 'SE/dog02.mp3',
+    // 犬が多い時の処理落ちがSEの再生数(cloneNode+play()の同時実行)によるものか切り分けるため、
+    // 検証中は一時的に2種類だけに絞っている(2026-08-08)。原因でなければ8種類に戻してよい
   ];
   const SE_COIN_SRC = 'SE/coin.mp3';
   const COIN_SE_MIN_INTERVAL_MS = 100; // 同じSEを鳴らしてから最低これだけ間を空ける
@@ -533,6 +676,7 @@
       // サイズは常に一定にするため、素材ごとの解像度差によらずパターン1の寸法を基準にする
       dogFrameW = dogFrameSets[0][0].width * DOG_SCALE;
       dogFrameH = dogFrameSets[0][0].height * DOG_SCALE;
+      drawContainedIcon(introDogIconEl, dogFrameSets[0][0], 34);
     })
     .catch((err) => console.error('犬の画像読み込みに失敗しました', err));
 
@@ -721,6 +865,7 @@
     .then((img) => {
       coinFrameH = img.naturalHeight;
       coinSheet = chromaKeyToCanvas(img, COIN_KEY_COLOR, COIN_KEY_THRESHOLD, COIN_KEY_FEATHER);
+      drawContainedIcon(introCoinIconEl, { canvas: coinSheet, sx: COIN_FRAMES[0].x, sw: COIN_FRAMES[0].w, sh: coinFrameH }, 34);
     })
     .catch((err) => console.error('コイン画像の読み込みに失敗しました', err));
 
@@ -1114,6 +1259,40 @@
   }
   resetGame();
 
+  // --- 初回起動時の「あそびかた」説明(2026-08-08 追加) ---
+  let introActive = true; // trueの間はプレイヤー移動・当たり判定を止め、説明画面を表示し続ける
+  const introShownAt = performance.now();
+  const INTRO_INPUT_IGNORE_MS = 500; // 表示直後の意図しない入力(残っていたタップ/キー)で即終了しないよう無視する時間
+
+  function dismissIntro() {
+    if (!introActive) return;
+    if (performance.now() - introShownAt < INTRO_INPUT_IGNORE_MS) return;
+    introActive = false;
+    introOverlayEl.classList.add('hide');
+  }
+
+  // 34x34の枠に収まるよう、アスペクト比を保ってcanvas全体に描画する(犬・コインアイコン共通)
+  function drawContainedIcon(canvasEl, sourceCanvas, boxSize) {
+    if (!canvasEl || !sourceCanvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvasEl.width = boxSize * dpr;
+    canvasEl.height = boxSize * dpr;
+    canvasEl.style.width = boxSize + 'px';
+    canvasEl.style.height = boxSize + 'px';
+    const ictx = canvasEl.getContext('2d');
+    ictx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const sw = sourceCanvas.sw ?? sourceCanvas.width;
+    const sh = sourceCanvas.sh ?? sourceCanvas.height;
+    const scale = Math.min(boxSize / sw, boxSize / sh);
+    const dw = sw * scale;
+    const dh = sh * scale;
+    if (sourceCanvas.sw) {
+      ictx.drawImage(sourceCanvas.canvas, sourceCanvas.sx, 0, sw, sh, (boxSize - dw) / 2, (boxSize - dh) / 2, dw, dh);
+    } else {
+      ictx.drawImage(sourceCanvas, (boxSize - dw) / 2, (boxSize - dh) / 2, dw, dh);
+    }
+  }
+
   // 犬にぶつかった瞬間。即ミスにはせず、ライフを削って一定時間硬直させる
   function triggerMiss(dog) {
     if (frozen || gameOver) return;
@@ -1172,6 +1351,7 @@
   // ヒット硬直中・ゲームオーバー中、タップ(クリック)で復帰/リスタートする
   viewportEl.addEventListener('pointerdown', () => {
     startBGM();
+    dismissIntro();
     tryResume();
   });
 
@@ -1192,6 +1372,7 @@
 
   function checkCollision() {
     if (!dogFrameSets) return;
+    if (introActive) return; // あそびかた説明中は当たらない
     if (performance.now() < invincibleUntil) return; // 無敵中は当たらない
     if (player.worldY > camera.top + BASE_H - BOTTOM_SAFE_ZONE_PX) return; // 画面最下部の安全地帯
     const hitW = dogFrameW * 0.55;
@@ -1371,13 +1552,15 @@
     ensureCoinPopulation(camera.top);
     updateCoinAnimation(dt);
 
-    if (!frozen) {
+    if (!frozen && !introActive) {
       const kv = keyboardVector();
       // キーボード入力があればそちらを優先、なければジョイスティックの入力を使う
-      const v = (kv.x !== 0 || kv.y !== 0) ? kv : joyVector;
+      const usingKeyboard = kv.x !== 0 || kv.y !== 0;
+      const v = usingKeyboard ? kv : joyVector;
+      const effectiveSpeed = usingKeyboard ? speed : speed * JOYSTICK_SPEED_MULTIPLIER;
 
-      let nx = player.worldX + v.x * speed * dt;
-      let ny = player.worldY + v.y * speed * dt;
+      let nx = player.worldX + v.x * effectiveSpeed * dt;
+      let ny = player.worldY + v.y * effectiveSpeed * dt;
 
       nx = Math.max(player.r, Math.min(BASE_W - player.r, nx));
       ny = Math.max(camera.top + player.r, Math.min(camera.top + BASE_H - player.r, ny));
