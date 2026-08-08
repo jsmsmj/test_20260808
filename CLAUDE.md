@@ -167,19 +167,17 @@ iPhoneで最初から横向きで開始した場合はゲーム画面のサイ�
 - 対策として`orientationchange`イベントを追加で購読し、発火直後・100ms後・300ms後・600ms後の計4回`handleResize()`(`applyViewportScale()`+`checkOrientation()`)を再実行するようにした。iOSの回転アニメーション/レイアウト確定タイミングは端末やiOSバージョンでばらつくため、複数回のリトライで最終的な正しい値に収束させる典型的な回避策。あわせて`window.visualViewport`が存在する環境では`visualViewport`の`resize`イベントでも`handleResize()`を呼ぶようにし、アドレスバーの表示/非表示など`window.resize`が発火しないケースにも備えている
 - Playwrightではheadless Chromiumの`setViewportSize`が同期的に正しい値へ更新されてしまうため、この不具合自体(過渡的な古い値を掴む現象)は再現できなかった。`orientationchange`/`visualViewport.resize`イベントを発火させてもエラーが出ないこと、縦持ち⇄横向きを行き来しても最終的なscaleが正しい値(0.65)に収束することは確認済みだが、**実機での再確認を推奨**
 
-## 効果音(SE、2026-08-08 追加、同日中にWeb Audio APIへ全面書き換え)
+## 効果音(SE、2026-08-08 追加、同日中に2回書き換えて最終的にHowler.jsへ)
 
 - `SE/` フォルダの音声ファイルを使用。犬出現音は `SE_DOG_SRCS`(本来は`SE/dog01.mp3`〜`dog08.mp3`の8種類)、コイン獲得音は `SE/coin.mp3`(`SE_COIN_SRC`)
   - **2026-08-08 現在、`SE_DOG_SRCS`は`dog01`/`dog02`の2種類だけに絞ってある**。犬が多い場面(`MAX_DOGS=50`匹付近)でiPhone実機の処理が重くなる(処理落ちのような症状)報告があり、SEの同時再生数が原因かを切り分けるための実験的措置。原因でないと分かれば8種類(`dog01`〜`dog08`)に戻してよい
-- **実装方式はWeb Audio API**(`AudioContext`/`AudioBuffer`/`AudioBufferSourceNode`)。以下の2段階の試行錯誤を経てここに落ち着いた
+- **実装方式は最終的にHowler.js**(`https://cdn.jsdelivr.net/npm/howler@2.2.4/dist/howler.min.js`、nipplejsと同様CDNから読み込み)。以下の3段階の試行錯誤を経てここに落ち着いた
   1. **1段階目、HTMLAudioElementの`cloneNode()`方式**: `new Audio(src)`を1つ作っておき、鳴らす瞬間に`cloneNode()`した複製へ`play()`する定番手法から開始。しかし①犬が多い場面(`MAX_DOGS=50`付近)でiPhone実機が処理落ちする、②コインSEがiPhone実機で鳴らないことがある、の2つの実機バグが出た
-  2. **2段階目、HTMLAudioElementの使い回しプール方式**: ②の原因が`cloneNode()`で作った新しい`<audio>`要素はiOSでは要素ごとに「ユーザー操作の中で一度play()されたか」のアンロックが必要と判明したため、同じ音を`SE_POOL_SIZE`個ずつ使い回すプール+初回操作時に全要素を無音アンロックする方式に変更し、②は解消した。しかしその後さらに2つの実機バグが発覚: ③コイン取得時、使い回す要素を鳴らす前に行っていた`currentTime = 0`(シーク)がモバイル実機では軽くなく、連続でコインを取ると0.1秒前後ゲームがカクつく体感になった。④アンロック処理(プール全要素を`play()`→即`pause()`)の`pause()`が間に合わず、ゲーム開始直後の最初の操作の瞬間にプール全要素(犬2パターン×3+コイン3=9個)の音が一瞬だけ実際に漏れて聞こえ、「ワンワンコインコイン」と大量に鳴っているように聞こえていた
-  3. **最終形、Web Audio API方式**: `AudioBuffer`にデコード済みの音声データを1つずつ持たせ、鳴らす瞬間は毎回軽量な`AudioBufferSourceNode`を作って`start()`するだけにした。これによりシーク(③の原因)が無くなり、アンロックも`AudioContext.resume()`だけで済み実際の音を一切鳴らさないため④の副作用も無くなった。BGMは引き続きHTMLAudioElement(`bgmAudio`)のまま(ループ再生のみで重ね鳴りが不要なため変更不要)
-- `audioCtx = new (AudioContext || webkitAudioContext)()`を1つ作り、`seDogGain`/`seCoinGain`という`GainNode`をそれぞれ`audioCtx.destination`に接続して`DOG_SE_VOLUME`(=0.07)/`COIN_SE_VOLUME`(=0.9)を音量として設定する
-- `loadAudioBuffer(src)`が`fetch()`→`decodeAudioData()`で`AudioBuffer`にデコードする。犬は`Promise.all()`で`seDogBuffers`(配列)に、コインは`seCoinBuffer`にそれぞれ読み込み完了後セットされる
-- `playBuffer(buffer, gainNode, label)`が実際の再生本体。`AudioBufferSourceNode`を作って`buffer`をセットし、対応する`gainNode`に`connect()`してから`start(0)`するだけ(シークや要素の使い回し管理は一切不要。複数同時再生も、それぞれが独立した軽量なソースノードなので自然に共存できる)
-- **アンロック**: 最初のユーザー操作(`keydown`/`viewportEl`への`pointerdown`/nipplejsの`move`、`startBGM()`と同じ呼び出し箇所)で`unlockAudioContext()`を呼び、`audioCtx.state === 'suspended'`なら`audioCtx.resume()`する。`resume()`は非同期で、Playwright実測では呼び出しから100〜150ms程度で`'running'`に遷移することを確認済み(実際のゲームプレイでは最初のSEが鳴るまでに十分な余裕がある)
-- **犬出現時**: 犬は画面の左右端に達すると反対側へラップする(`updateDogs()`、`dog.worldX`が`-half`または`BASE_W+half`を超えたら反転)。**このラップの瞬間、かつその犬が縦方向にも画面内(見えている状態)の時だけ**`playDogSE()`を呼ぶ(2026-08-08 最終版)。「画面の横から犬が出てきた時に鳴らす」という要望どおり、画面外(縦位置がまだ見えていない)でのラップでは鳴らない。`seDogBuffers.length`の中から`Math.random()`で選ぶが、直前(`lastDogSEIndex`)と同じインデックスを引いた場合は`(idx + 1 + ランダムオフセット) % seDogBuffers.length`で必ず別の音にずらす(連続再生の防止。件数を8→2に変えても壊れないよう`.length`基準で計算している)
+  2. **2段階目、HTMLAudioElementの使い回しプール方式**: ②の原因が`cloneNode()`で作った新しい`<audio>`要素はiOSでは要素ごとに「ユーザー操作の中で一度play()されたか」のアンロックが必要と判明したため、同じ音を複数個ずつ使い回すプール+初回操作時に全要素を無音アンロックする方式に変更し、②は解消した。しかしその後さらに2つの実機バグが発覚: ③コイン取得時、使い回す要素を鳴らす前に行っていた`currentTime = 0`(シーク)がモバイル実機では軽くなく、連続でコインを取ると0.1秒前後ゲームがカクつく体感になった。④アンロック処理(プール全要素を`play()`→即`pause()`)の`pause()`が間に合わず、ゲーム開始直後の最初の操作の瞬間にプール全要素の音が一瞬だけ実際に漏れて聞こえ、「ワンワンコインコイン」と大量に鳴っているように聞こえていた
+  3. **3段階目、自前のWeb Audio API実装**: `AudioContext`+`AudioBuffer`+`AudioBufferSourceNode`に変更し、シーク(③の原因)を無くし、アンロックも`AudioContext.resume()`だけ(実際の音を鳴らさないので④の副作用も無い)にした。ここまでは動作したが、実機では再生タイミングによって`audioCtx.state`が`suspended`のまま(=無音)になるケースが依然として報告された(自前のアンロック呼び出しのタイミング・頻度では取りこぼす場合があったとみられる)
+  4. **最終形、Howler.js**: 自前でアンロック処理を書き続けるより、実績のあるオーディオライブラリに任せる方が確実という判断で導入。Howlerは`touchstart`/`touchend`/`click`/`keydown`など複数の入力イベントをdocument全体で監視し続け、成功するまで何度もアンロックを再試行する仕組みを標準で持つ(`Howler.autoUnlock`)。同じ音の重ね鳴りもHowlの`play()`が内部で管理するため、自前のプール管理コードも不要になった。BGMは引き続きHTMLAudioElement(`bgmAudio`)のまま(ループ再生のみで重ね鳴りが不要なため変更不要)
+- `createSEHowl(src, volume, label)`が`new Howl({ src: [src], volume })`を作り、`'play'`/`'playerror'`イベントで`logSEDebug()`に実際の成否を記録する。犬は`SE_DOG_SRCS`の数だけ`seDogHowls`配列に、コインは`seCoinHowl`に1つずつ持つ
+- **犬出現時**: 犬は画面の左右端に達すると反対側へラップする(`updateDogs()`、`dog.worldX`が`-half`または`BASE_W+half`を超えたら反転)。**このラップの瞬間、かつその犬が縦方向にも画面内(見えている状態)の時だけ**`playDogSE()`を呼ぶ(2026-08-08 最終版)。「画面の横から犬が出てきた時に鳴らす」という要望どおり、画面外(縦位置がまだ見えていない)でのラップでは鳴らない。`seDogHowls.length`の中から`Math.random()`で選ぶが、直前(`lastDogSEIndex`)と同じインデックスを引いた場合は`(idx + 1 + ランダムオフセット) % seDogHowls.length`で必ず別の音にずらす(連続再生の防止。件数を8→2に変えても壊れないよう`.length`基準で計算している)
   - **試行錯誤の経緯(2026-08-08)**: ①最初は`resetDog()`(プールへの新規追加/画面後方から前方の未生成エリアへの再配置)のタイミングで鳴らしていたが、これは**まだ画面に見えていない**タイミングであり、体感よりかなり少なかった → ②`dog.visible`(画面内フラグ)が`false→true`に変わった瞬間に鳴らす方式に変更したが、犬は横移動しかせず縦(奥行き)には動かないため、**自機が完全に停止しているとカメラ(`camera.top`)が動かず、どの犬の`screenY`も変化せず一切鳴らなくなる**という問題が発覚 → ③一旦カメラに依存しない時間経過ベースの`updateDogBark()`(1.2〜3秒間隔のアンビエント再生)にしたが、「画面横から犬が出てきた時」という本来の要望とはズレていた → ④最終的に犬自身の左右ラップ移動(自機の移動状況に関係なく常に起きる)をトリガーにすることで、「実際に画面端から犬が現れる瞬間」と「自機静止中でも鳴り続く」を両立させた。静止中でも画面内に犬がいれば12秒で7回鳴ることを確認済み
   - **鳴きすぎバグ(2026-08-08 修正)**: 上記④の時点では`playDogSE()`自体に発生頻度の間引きが一切無く、犬のラップさえ起きれば無制限に連続再生していた。犬の匹数はノコギリ波で最大`MAX_DOGS=50`匹まで増えるが、1匹あたりのラップ周期は横幅と速度から計算すると平均2秒程度しかないため、匹数が多い(50匹に近い)場面では理論上ラップイベントが1秒間に十数〜20回超起き、鳴き声が団子状に重なって「ものすごい勢いで鳴り続ける」状態になっていた。`playCoinSE()`と同じ間引きパターンを追加し、`lastDogSEAt`から`DOG_SE_MIN_INTERVAL_MS`(=220ms)未満なら再生をスキップするようにした
   - **iPhone実機での処理落ちの原因と確定(2026-08-08)**: `updateDogs()`内の`playDogSE()`呼び出しをコメントアウトしたところ実機の処理落ちが解消したため、犬のSE再生(当時は`cloneNode()`方式)が原因と確定した。**現在この呼び出しはコメントアウトしたまま(犬のSEは鳴らない)**。Web Audio API方式に置き換えた今は軽くなっているはずだが、再度有効化する際は実機で確認すること
@@ -216,11 +214,11 @@ iPhoneで最初から横向きで開始した場合はゲーム画面のサイ�
 
 ## SEデバッグ表示(`#se-debug`、2026-08-08 追加)
 
-「iPhone実機でコインSEが鳴らないことがある」原因切り分けのための一時的なデバッグ表示。Web Inspector(Macが無いと使えない)に頼らず、実機の画面上だけで原因を確認できるようにする目的で追加した。この表示のおかげで実機ログから`NotAllowedError`が確認でき、最終的にWeb Audio API方式への全面書き換え(上記「効果音(SE)」節)につながった。
+「iPhone実機でコインSEが鳴らないことがある」原因切り分けのための一時的なデバッグ表示。Web Inspector(Macが無いと使えない)に頼らず、実機の画面上だけで原因を確認できるようにする目的で追加した。この表示のおかげで実機ログから`NotAllowedError`(HTMLAudioElement版)、続いて`suspended`状態での無音(自前Web Audio API版)が確認でき、最終的にHowler.jsへの切り替え(上記「効果音(SE)」節)につながった。
 
-- `playBuffer()`内、`logSEDebug()`で画面左上の`#se-debug`に直近8件のログを表示する。Web Audio APIの`AudioBufferSourceNode.start()`は(HTMLAudioElementの`play()`と違って)Promiseを返さず失敗時も例外を投げないため、代わりに再生した瞬間の`audioCtx.state`を見て`OK coin.mp3`(`running`中)/`NG(suspended) coin.mp3`(まだアンロックされておらず無音)のように表示する
-- Playwrightでは`playCoinSE()`を直接呼び出し、`#se-debug`に`"1.2s OK coin.mp3"`のような行が追加されること、8件を超えると古い行から消えて常に最大8行に収まることを確認済み
-- Web Audio API方式で問題が解消したことが実機で確認でき次第、`playBuffer()`内の`logSEDebug()`呼び出しと`#se-debug`のHTML/CSSは削除してよい
+- `createSEHowl()`内、Howlの`'play'`/`'playerror'`イベントで`logSEDebug()`が画面左上の`#se-debug`に直近8件のログを表示する(`OK coin.mp3`=実際に再生開始できた、`NG coin.mp3: ...`=Howlerが報告した失敗理由)。Web Audio API版のような「`audioCtx.state`から推測する」のではなく、Howlerが実際に把握している成否をそのまま表示できるようになった
+- Playwrightでは`playCoinSE()`を直接呼び出し、`#se-debug`に`"0.9s OK coin.mp3"`のような行が追加されること、8件を超えると古い行から消えて常に最大8行に収まること、8回連続再生してもすべて`OK`になることを確認済み
+- Howler.jsで問題が解消したことが実機で確認でき次第、`createSEHowl()`内の`'play'`/`'playerror'`ログ呼び出しと`#se-debug`のHTML/CSSは削除してよい
 
 ## 今後の予定・未実装
 
