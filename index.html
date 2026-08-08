@@ -18,7 +18,8 @@
   #viewport {
     position: relative;
     width: 100vw;
-    height: 100vh;
+    height: 100vh; /* dvh未対応ブラウザ向けフォールバック */
+    height: 100dvh; /* iOS Safariのアドレスバー等で実際に見えている高さに追従させる(100vhは非表示時基準で大きくなり、bottom:0のジョイスティックが画面外に出てしまうため) */
     overflow: hidden;
   }
   #game {
@@ -71,7 +72,9 @@
     pointer-events: none;
     z-index: 5;
   }
-  /* スマホでジョイスティックを認識する範囲(左下エリア)。デバッグ用に薄く表示 */
+  /* スマホでジョイスティックを認識する範囲(左下エリア)。デバッグ用に薄く表示
+     #game(scaleで縮小される)ではなく#viewport直下に置き、実画面のピクセルサイズで
+     操作範囲・ジョイスティック自体の見た目サイズが確保されるようにしている */
   #joystick-zone {
     position: absolute;
     left: 0;
@@ -79,7 +82,7 @@
     width: 50%;
     height: 50%;
     background: rgba(255, 255, 255, 0.03);
-    z-index: 4;
+    z-index: 50;
   }
   #hint {
     position: absolute;
@@ -241,6 +244,37 @@
     pointer-events: none;
     z-index: 9;
   }
+  #rotate-overlay {
+    position: fixed;
+    inset: 0;
+    background: #222;
+    color: #fff;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: sans-serif;
+    text-align: center;
+    padding: 24px;
+    box-sizing: border-box;
+    z-index: 100;
+  }
+  #rotate-overlay.show {
+    display: flex;
+  }
+  #rotate-overlay .rotate-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    animation: rotate-hint 1.6s ease-in-out infinite;
+  }
+  #rotate-overlay .rotate-text {
+    font-size: 18px;
+    font-weight: bold;
+  }
+  @keyframes rotate-hint {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(90deg); }
+  }
 </style>
 </head>
 <body>
@@ -249,7 +283,6 @@
     <canvas id="world"></canvas>
     <div id="player"></div>
     <canvas id="fx-layer"></canvas>
-    <div id="joystick-zone"></div>
 <!--
     <div id="hint">WASD / 画面左下ドラッグで移動・奥(上)へ進もう。犬にぶつかるとミス!</div>
 -->
@@ -269,6 +302,11 @@
       <span class="tap-hint">タップして最初から</span>
     </div>
     <div id="daynight-overlay"></div>
+  </div>
+  <div id="joystick-zone"></div>
+  <div id="rotate-overlay">
+    <div class="rotate-icon">📱</div>
+    <div class="rotate-text">画面を横向きにしてください</div>
   </div>
 </div>
 
@@ -290,6 +328,7 @@
   const dogDebugActualEl = document.getElementById('dogDebugActual');
   const dogDebugTargetEl = document.getElementById('dogDebugTarget');
   const daynightOverlayEl = document.getElementById('daynight-overlay');
+  const rotateOverlayEl = document.getElementById('rotate-overlay');
 
   // --- 論理解像度を初回起動時のウィンドウサイズに固定し、以降のリサイズは拡大縮小のみで対応する ---
   const BASE_W = 800;
@@ -301,10 +340,23 @@
     const scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
     gameEl.style.transform = `translate(-50%, -50%) scale(${scale})`;
   }
-  window.addEventListener('resize', applyViewportScale);
-  applyViewportScale();
 
-  const speed = 180; // px/sec
+  // --- スマホ縦持ち対策: 論理解像度が横長(800x600)なので、縦持ちだと画面の一部しか使えない。
+  //     縦持ちの間はゲームを止めて「横向きにしてください」の案内を出す ---
+  let orientationBlocked = false;
+  function checkOrientation() {
+    orientationBlocked = window.innerWidth < window.innerHeight;
+    rotateOverlayEl.classList.toggle('show', orientationBlocked);
+  }
+
+  function handleResize() {
+    applyViewportScale();
+    checkOrientation();
+  }
+  window.addEventListener('resize', handleResize);
+  handleResize();
+
+  const speed = 150; // px/sec
 
   // --- キーボード(WASD)入力 ---
   const keys = { w: false, a: false, s: false, d: false };
@@ -363,7 +415,8 @@
     'SE/dog05.mp3', 'SE/dog06.mp3', 'SE/dog07.mp3', 'SE/dog08.mp3',
   ];
   const SE_COIN_SRC = 'SE/coin.mp3';
-  const COIN_SE_MIN_INTERVAL_MS = 50; // 同じSEを鳴らしてから最低これだけ間を空ける
+  const COIN_SE_MIN_INTERVAL_MS = 100; // 同じSEを鳴らしてから最低これだけ間を空ける
+  const DOG_SE_MIN_INTERVAL_MS = 220; // 犬の匹数が多い時に鳴き声が団子状に重なりすぎないよう間引く
   const DOG_SE_VOLUME = 0.07; // 犬の鳴き声の音量(0〜1)
   const COIN_SE_VOLUME = 0.9; // コイン獲得音の音量(0〜1)
 
@@ -387,7 +440,11 @@
   }
 
   let lastDogSEIndex = -1;
+  let lastDogSEAt = -Infinity;
   function playDogSE() {
+    const now = performance.now();
+    if (now - lastDogSEAt < DOG_SE_MIN_INTERVAL_MS) return;
+    lastDogSEAt = now;
     let idx = Math.floor(Math.random() * seDogAudios.length);
     if (seDogAudios.length > 1 && idx === lastDogSEIndex) {
       idx = (idx + 1 + Math.floor(Math.random() * (seDogAudios.length - 1))) % seDogAudios.length;
@@ -1285,10 +1342,16 @@
 
   // --- ゲームループ ---
   let last = performance.now();
+  let wasBlocked = false;
   function loop(now) {
-    if (gamePaused) {
+    if (gamePaused || orientationBlocked) {
+      wasBlocked = true;
       requestAnimationFrame(loop);
       return;
+    }
+    if (wasBlocked) {
+      last = now; // 縦持ち案内中に止まっていた分、dtが跳ね上がらないよう基準をリセット
+      wasBlocked = false;
     }
 
     let dt = (now - last) / 1000;
