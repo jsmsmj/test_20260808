@@ -541,7 +541,7 @@
 
   window.addEventListener('keydown', (e) => {
     startBGM();
-    unlockAudioPools();
+    unlockAudioContext();
     const k = e.key.toLowerCase();
     if (!(k in keys)) return;
     keys[k] = true;
@@ -584,7 +584,7 @@
   });
   manager.on('move', (evt, data) => {
     startBGM();
-    unlockAudioPools();
+    unlockAudioContext();
     if (data.vector) {
       // nipplejsのyは上が+なので、画面座標(下が+)に合わせて反転
       joyVector = { x: data.vector.x, y: -data.vector.y };
@@ -596,61 +596,67 @@
     joystickHintEl.classList.remove('hide');
   });
 
-  // --- 効果音(SE) ---
+  // --- 効果音(SE): Web Audio APIで再生する ---
+  // 以前はHTMLAudioElementのcloneNode()→使い回しプール方式だったが、2つ問題が出た。
+  // ①鳴らす直前の`currentTime = 0`(シーク)がモバイル実機ではタダではなく、コインを連続で
+  //   取ると0.1秒前後ゲームがカクつく体感になっていた。②iOSでは<audio>要素ごとに
+  //   「ユーザー操作の中で一度再生されたか」のアンロックが必要で、対策として一度でも
+  //   ページ内で無音化して鳴らす(play→即pause)手法を使っていたが、pause()が間に合わず
+  //   ゲーム開始直後に一瞬だけ実際に音が漏れ、「ワンワンコインコイン」と大量に鳴って聞こえていた。
+  // Web Audio APIならデコード済みの`AudioBuffer`を1回だけ共有し、鳴らすたびに軽い
+  // `AudioBufferSourceNode`を都度作って`start()`するだけで済む。シークが無いのでカクつかず、
+  // アンロックも`AudioContext.resume()`だけで実際に音を鳴らさずに済む
   const SE_DOG_SRCS = [
     'SE/dog01.mp3', 'SE/dog02.mp3',
-    // 犬が多い時の処理落ちがSEの再生数(cloneNode+play()の同時実行)によるものか切り分けるため、
-    // 検証中は一時的に2種類だけに絞っている(2026-08-08)。原因でなければ8種類に戻してよい
+    // 犬が多い時の処理落ちの原因がSE再生自体(cloneNode+play())だったため、
+    // updateDogs()側の呼び出しをコメントアウトして現在無効化している(2026-08-08)
   ];
   const SE_COIN_SRC = 'SE/coin.mp3';
   const COIN_SE_MIN_INTERVAL_MS = 100; // 同じSEを鳴らしてから最低これだけ間を空ける
   const DOG_SE_MIN_INTERVAL_MS = 220; // 犬の匹数が多い時に鳴き声が団子状に重なりすぎないよう間引く
   const DOG_SE_VOLUME = 0.07; // 犬の鳴き声の音量(0〜1)
   const COIN_SE_VOLUME = 0.9; // コイン獲得音の音量(0〜1)
-  const SE_POOL_SIZE = 3; // 同じ音を複数個ずつ使い回す(重なって再生されてもお互いを止めないため)
 
-  // 同じ音を複数個ずつ事前に読み込んでおき(プール)、鳴らす瞬間は順番に使い回す。
-  // 以前はcloneNode()でその場ごとに新しい<audio>要素を作っていたが、iOS Safariは
-  // 「ユーザー操作の中で一度も再生されたことがない<audio>要素」のplay()をNotAllowedErrorで
-  // 拒否することがあり(ページ内で既に他の音が鳴っていても要素ごとに必要)、cloneNode()は
-  // 呼ぶたびに未アンロックの新要素を作ってしまうため実機でコインSEが鳴らないことがあった。
-  // 要素を使い回す(プール)方式にし、初回のユーザー操作でまとめて全部アンロックしておく
-  function createSEPool(src, volume, size) {
-    return Array.from({ length: size }, () => {
-      const a = new Audio(src);
-      a.preload = 'auto';
-      a.volume = volume;
-      return a;
-    });
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const seDogGain = audioCtx.createGain();
+  seDogGain.gain.value = DOG_SE_VOLUME;
+  seDogGain.connect(audioCtx.destination);
+
+  const seCoinGain = audioCtx.createGain();
+  seCoinGain.gain.value = COIN_SE_VOLUME;
+  seCoinGain.connect(audioCtx.destination);
+
+  function loadAudioBuffer(src) {
+    return fetch(src)
+      .then((res) => res.arrayBuffer())
+      .then((data) => audioCtx.decodeAudioData(data));
   }
 
-  const seDogPools = SE_DOG_SRCS.map((src) => ({ pool: createSEPool(src, DOG_SE_VOLUME, SE_POOL_SIZE), i: 0 }));
-  const seCoinPoolState = { pool: createSEPool(SE_COIN_SRC, COIN_SE_VOLUME, SE_POOL_SIZE), i: 0 };
+  let seDogBuffers = [];
+  Promise.all(SE_DOG_SRCS.map(loadAudioBuffer))
+    .then((buffers) => { seDogBuffers = buffers; })
+    .catch((err) => console.error('犬SEの読み込みに失敗しました', err));
 
-  // 最初のユーザー操作(タップ/キー入力/ジョイスティック操作)の瞬間に、プール内の全要素を
-  // 一度再生→即一時停止して「アンロック」する。以後はゲームループ内(操作の外)からの
-  // 再生でも鳴らせるようになる(startBGM()と同じ考え方・同じ呼び出し箇所)
-  let audioPoolUnlocked = false;
-  function unlockAudioPools() {
-    if (audioPoolUnlocked) return;
-    audioPoolUnlocked = true;
-    const allPools = seDogPools.map((s) => s.pool).concat([seCoinPoolState.pool]);
-    for (const pool of allPools) {
-      for (const a of pool) {
-        a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
-      }
-    }
+  let seCoinBuffer = null;
+  loadAudioBuffer(SE_COIN_SRC)
+    .then((buffer) => { seCoinBuffer = buffer; })
+    .catch((err) => console.error('コインSEの読み込みに失敗しました', err));
+
+  // 最初のユーザー操作(タップ/キー入力/ジョイスティック操作)の瞬間にAudioContextを再開する。
+  // 実際の音は一切鳴らさないので、以前のHTMLAudioElement版のような「アンロック時に一瞬鳴る」
+  // 副作用が無い(startBGM()と同じ考え方・同じ呼び出し箇所)
+  function unlockAudioContext() {
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   }
 
-  function playFromPool(state) {
-    const a = state.pool[state.i];
-    state.i = (state.i + 1) % state.pool.length;
-    const label = a.src.split('/').pop();
-    a.currentTime = 0;
-    // ユーザー操作前の自動再生ブロックなどで失敗することがあるが、ゲーム進行には影響しないので無視する
-    a.play()
-      .then(() => logSEDebug(`OK ${label}`))
-      .catch((err) => logSEDebug(`NG ${label}: ${err.name} ${err.message}`));
+  function playBuffer(buffer, gainNode, label) {
+    if (!buffer) return; // まだ読み込み中
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(gainNode);
+    source.start(0);
+    logSEDebug(`${audioCtx.state === 'running' ? 'OK' : 'NG(' + audioCtx.state + ')'} ${label}`);
   }
 
   let lastDogSEIndex = -1;
@@ -658,13 +664,14 @@
   function playDogSE() {
     const now = performance.now();
     if (now - lastDogSEAt < DOG_SE_MIN_INTERVAL_MS) return;
+    if (seDogBuffers.length === 0) return;
     lastDogSEAt = now;
-    let idx = Math.floor(Math.random() * seDogPools.length);
-    if (seDogPools.length > 1 && idx === lastDogSEIndex) {
-      idx = (idx + 1 + Math.floor(Math.random() * (seDogPools.length - 1))) % seDogPools.length;
+    let idx = Math.floor(Math.random() * seDogBuffers.length);
+    if (seDogBuffers.length > 1 && idx === lastDogSEIndex) {
+      idx = (idx + 1 + Math.floor(Math.random() * (seDogBuffers.length - 1))) % seDogBuffers.length;
     }
     lastDogSEIndex = idx;
-    playFromPool(seDogPools[idx]);
+    playBuffer(seDogBuffers[idx], seDogGain, SE_DOG_SRCS[idx].split('/').pop());
   }
 
   let lastCoinSEAt = -Infinity;
@@ -672,7 +679,7 @@
     const now = performance.now();
     if (now - lastCoinSEAt < COIN_SE_MIN_INTERVAL_MS) return;
     lastCoinSEAt = now;
-    playFromPool(seCoinPoolState);
+    playBuffer(seCoinBuffer, seCoinGain, 'coin.mp3');
   }
 
   // --- BGM ---
@@ -1423,7 +1430,7 @@
   // ヒット硬直中・ゲームオーバー中、タップ(クリック)で復帰/リスタートする
   viewportEl.addEventListener('pointerdown', () => {
     startBGM();
-    unlockAudioPools();
+    unlockAudioContext();
     dismissIntro();
     tryResume();
   });
