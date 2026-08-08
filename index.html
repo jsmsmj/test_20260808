@@ -541,6 +541,7 @@
 
   window.addEventListener('keydown', (e) => {
     startBGM();
+    unlockAudioPools();
     const k = e.key.toLowerCase();
     if (!(k in keys)) return;
     keys[k] = true;
@@ -583,6 +584,7 @@
   });
   manager.on('move', (evt, data) => {
     startBGM();
+    unlockAudioPools();
     if (data.vector) {
       // nipplejsのyは上が+なので、画面座標(下が+)に合わせて反転
       joyVector = { x: data.vector.x, y: -data.vector.y };
@@ -605,25 +607,48 @@
   const DOG_SE_MIN_INTERVAL_MS = 220; // 犬の匹数が多い時に鳴き声が団子状に重なりすぎないよう間引く
   const DOG_SE_VOLUME = 0.07; // 犬の鳴き声の音量(0〜1)
   const COIN_SE_VOLUME = 0.9; // コイン獲得音の音量(0〜1)
+  const SE_POOL_SIZE = 3; // 同じ音を複数個ずつ使い回す(重なって再生されてもお互いを止めないため)
 
-  // 元となるAudioを1つずつ読み込んでおき、鳴らす瞬間はcloneNode()した複製を再生する。
-  // こうすることで同じ音同士が重なって鳴ってもお互いを止めずに済む(HTML Audioでの定番の手法)
-  const seDogAudios = SE_DOG_SRCS.map((src) => {
-    const a = new Audio(src);
-    a.preload = 'auto';
-    a.volume = DOG_SE_VOLUME;
-    return a;
-  });
-  const seCoinAudio = new Audio(SE_COIN_SRC);
-  seCoinAudio.preload = 'auto';
-  seCoinAudio.volume = COIN_SE_VOLUME;
+  // 同じ音を複数個ずつ事前に読み込んでおき(プール)、鳴らす瞬間は順番に使い回す。
+  // 以前はcloneNode()でその場ごとに新しい<audio>要素を作っていたが、iOS Safariは
+  // 「ユーザー操作の中で一度も再生されたことがない<audio>要素」のplay()をNotAllowedErrorで
+  // 拒否することがあり(ページ内で既に他の音が鳴っていても要素ごとに必要)、cloneNode()は
+  // 呼ぶたびに未アンロックの新要素を作ってしまうため実機でコインSEが鳴らないことがあった。
+  // 要素を使い回す(プール)方式にし、初回のユーザー操作でまとめて全部アンロックしておく
+  function createSEPool(src, volume, size) {
+    return Array.from({ length: size }, () => {
+      const a = new Audio(src);
+      a.preload = 'auto';
+      a.volume = volume;
+      return a;
+    });
+  }
 
-  function playSE(baseAudio) {
-    const node = baseAudio.cloneNode();
-    node.volume = baseAudio.volume; // cloneNode()はvolumeプロパティを引き継がないことがあるため明示的にコピーする
-    const label = baseAudio.src.split('/').pop();
+  const seDogPools = SE_DOG_SRCS.map((src) => ({ pool: createSEPool(src, DOG_SE_VOLUME, SE_POOL_SIZE), i: 0 }));
+  const seCoinPoolState = { pool: createSEPool(SE_COIN_SRC, COIN_SE_VOLUME, SE_POOL_SIZE), i: 0 };
+
+  // 最初のユーザー操作(タップ/キー入力/ジョイスティック操作)の瞬間に、プール内の全要素を
+  // 一度再生→即一時停止して「アンロック」する。以後はゲームループ内(操作の外)からの
+  // 再生でも鳴らせるようになる(startBGM()と同じ考え方・同じ呼び出し箇所)
+  let audioPoolUnlocked = false;
+  function unlockAudioPools() {
+    if (audioPoolUnlocked) return;
+    audioPoolUnlocked = true;
+    const allPools = seDogPools.map((s) => s.pool).concat([seCoinPoolState.pool]);
+    for (const pool of allPools) {
+      for (const a of pool) {
+        a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+      }
+    }
+  }
+
+  function playFromPool(state) {
+    const a = state.pool[state.i];
+    state.i = (state.i + 1) % state.pool.length;
+    const label = a.src.split('/').pop();
+    a.currentTime = 0;
     // ユーザー操作前の自動再生ブロックなどで失敗することがあるが、ゲーム進行には影響しないので無視する
-    node.play()
+    a.play()
       .then(() => logSEDebug(`OK ${label}`))
       .catch((err) => logSEDebug(`NG ${label}: ${err.name} ${err.message}`));
   }
@@ -634,12 +659,12 @@
     const now = performance.now();
     if (now - lastDogSEAt < DOG_SE_MIN_INTERVAL_MS) return;
     lastDogSEAt = now;
-    let idx = Math.floor(Math.random() * seDogAudios.length);
-    if (seDogAudios.length > 1 && idx === lastDogSEIndex) {
-      idx = (idx + 1 + Math.floor(Math.random() * (seDogAudios.length - 1))) % seDogAudios.length;
+    let idx = Math.floor(Math.random() * seDogPools.length);
+    if (seDogPools.length > 1 && idx === lastDogSEIndex) {
+      idx = (idx + 1 + Math.floor(Math.random() * (seDogPools.length - 1))) % seDogPools.length;
     }
     lastDogSEIndex = idx;
-    playSE(seDogAudios[idx]);
+    playFromPool(seDogPools[idx]);
   }
 
   let lastCoinSEAt = -Infinity;
@@ -647,7 +672,7 @@
     const now = performance.now();
     if (now - lastCoinSEAt < COIN_SE_MIN_INTERVAL_MS) return;
     lastCoinSEAt = now;
-    playSE(seCoinAudio);
+    playFromPool(seCoinPoolState);
   }
 
   // --- BGM ---
@@ -1398,6 +1423,7 @@
   // ヒット硬直中・ゲームオーバー中、タップ(クリック)で復帰/リスタートする
   viewportEl.addEventListener('pointerdown', () => {
     startBGM();
+    unlockAudioPools();
     dismissIntro();
     tryResume();
   });
