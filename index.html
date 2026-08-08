@@ -435,7 +435,7 @@
     </div>
     <div class="intro-row">
       <img src="imgs/balloon-red.png" class="intro-icon" alt="balloon">
-      <span class="intro-text">風船はお助けアイテム(ライフ回復 or コインばらまき)</span>
+      <span class="intro-text">風船はお助けアイテム</span>
     </div>
     <span class="tap-hint">タップ or WASDでスタート</span>
   </div>
@@ -801,7 +801,8 @@
       if (wrapped) {
         // 画面の端から犬が現れた瞬間。実際に見えている(画面内の縦位置にいる)時だけ鳴らす
         const screenY = dog.baseWorldY + dog.yOffset - camera.top;
-        if (screenY > -dogFrameH && screenY < BASE_H + dogFrameH) playDogSE();
+        // iPhoneでの処理落ちの原因切り分けのため、犬のSE再生を一時的に無効化(2026-08-08)
+        // if (screenY > -dogFrameH && screenY < BASE_H + dogFrameH) playDogSE();
       }
 
       dog.bobPhase += dt * dog.bobFreq;
