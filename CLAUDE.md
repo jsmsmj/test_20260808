@@ -1,0 +1,179 @@
+# sample-game (test_20260808)
+
+スマホ・PCブラウザで動くミニゲームのプロトタイプ。単一の [index.html](index.html) に HTML/CSS/JS を全てまとめている(ビルド不要、静的ファイルとして配信するだけで動く)。
+
+## ゲーム概要
+
+見下ろし2D。プレイヤー(黄色い丸)は芝生の上を自由に移動しつつ、奥(画面上方向)へ進んで距離を稼ぐ。奥へ進むとカメラが前方へだけスクロールしていく(クロッシーロード風。後ろには戻れないが、現在見えている範囲内なら自由に動ける)。芝生の上を犬が元気に走り回っており、犬に接触するとライフが減る(ライフ・残機制、詳細は「衝突判定・ヒット/ライフ/残機」参照)。
+
+道路や信号待ちのような「レーンを跨ぐ」ギミックは採用していない。犬は特定の帯に固定されず、芝生のどこにでも自由に出現・移動する。
+
+## 操作方法
+
+- PC: WASD キーで8方向に移動
+- スマホ: 画面左下 (`#joystick-zone`) をドラッグして nipplejs の仮想ジョイスティックを操作
+- キーボード入力がある場合はジョイスティックより優先される
+
+## 座標系とカメラ
+
+- `worldY` は上(奥)に進むほど小さく(負に)なる。`worldY = 0` がスタート地点
+- `camera.top` はその時点で画面上端に対応するワールドY座標。**前方にしか動かない**(`camera.top = Math.min(camera.top, player.worldY - innerHeight*0.8)`)。プレイヤーが画面の奥側(上端付近)まで進むとカメラが追従してスクロールする
+- プレイヤーは水平方向は画面幅にクランプ、垂直方向は「現在のカメラが見せている範囲」にクランプされる(戻れるのは今見えている範囲まで)
+- 距離スコア(HUDの「距離: Xm」)は `round(-player.worldY / LANE_H)`。`LANE_H = 140px` を「1m」とする独自単位
+
+## レーン(帯)
+
+`lanes` 配列は見た目の芝生の縞模様(2色を交互)とスコア単位のためだけに存在し、当たり判定や犬の生成には関与しない。プレイヤーの前方に応じて `ensureLanes()` が自動生成し、後方に流れたものは `REMOVE_BUFFER` を超えたら破棄する。
+
+## 犬(障害物)
+
+- 画像は走行アニメーション4コマ×柄違いのパターンを複数用意(`DOG_PATTERN_SRCS`。現在 `1-1〜1-4.png` / `2-1〜2-4.png` / `3-1〜3-4.png` / `4-1〜4-4.png` の4パターン)。背景色はどれもほぼ RGB(63,200,144) の単色で、読み込み時に Canvas 上でクロマキー処理して透過させ、パターンごとに4枚ずつ `dogFrameSets`(`[[pattern1の4枚], [pattern2の4枚], ...]`)にキャッシュして使い回している(`chromaKeyToCanvas`)。各犬は生成時(`resetDog`)に `dog.patternIndex` をランダムに1つ選ぶ(今のところ柄が違うだけで動きに差はない。パターンを増やす場合は `DOG_PATTERN_SRCS` に配列を1つ追加するだけでよい。同じ背景色・比率の素材なら追加コード不要)
+- 犬のサイズは **常に一定**(`DOG_SCALE = 0.2`)。ランダムな大小はつけていない。パターンごとに元画像の解像度が違っても(1系は317×344px、2〜4系は332×361px)、描画先のサイズ(`dogFrameW`/`dogFrameH`)はパターン1基準で固定してから `drawImage` で引き伸ばして描画しているので、見た目のサイズは常に揃う
+- 足元には横長の楕円の影(`drawShadow`、`rgba(0,0,0,0.25)`。犬・コイン共用の汎用関数)を地面に描画している(2026-08-08 追加)。素材のPNG自体にも影が描かれていたが、背景に近い色でクロマキー時に透過されて消えてしまうため、別途Canvasで描き直している。影は `dog.baseWorldY`(バウンド前の位置。`SHADOW_Y_RATIO=0.88`=画像の下寄り)を基準にしていて `dog.yOffset` を含まないので、犬がジャンプで上下にバウンドしても影自体は地面の高さに固定されたまま動かない
+- 犬は「使い回しプール」方式で管理(`dogs` 配列)。各犬は左右いずれかに走り続け、画面端で反対側にラップする。上下方向はサイン波で軽くバウンドさせ(`bobPhase`/`bobAmp`)、まっすぐ機械的に進むのではなく飛び跳ねる動きにしている
+- **描画の重なり順(2026-08-08 追加)**: `drawWorld()`内で描画直前に `dogs.slice().sort((a,b) => a.baseWorldY - b.baseWorldY)` してから描く。奥(`baseWorldY`が小さい=画面上寄り)の犬を先に描き、手前(画面下寄り)の犬を後から重ねて描くことで、手前の犬が奥の犬の前面に来るようにしている。ソートは描画用の一時コピーに対してだけ行っており、`dogs`配列自体の順序(生成順)は変えていない
+- 犬がカメラの後方(`REMOVE_BUFFER` 分)まで流れたら、`resetDog()` でカメラの前方(まだ見えていないエリア)へ再配置して使い回す。新規生成ではなく再利用なので、匹数が増えてもGCの負荷は増えない
+- スタート地点から `SAFE_DISTANCE_PX = 420px`(=3m)以内には犬を配置しない(即死回避のための安全地帯)
+
+### 匹数は距離に応じてノコギリ波状に増減する(2026-08-08 更新)
+
+`targetDogCount(distanceM)` で決定し、`ensureDogPopulation()` が毎フレーム呼ばれて過不足を補正する。`distanceM % DOG_CYCLE_LENGTH_M`(周期、=50m)を使って「0〜50mで`MIN_DOGS`→`MAX_DOGS`へ直線増加 → 50m地点で`MIN_DOGS`まで一気に戻る → 51〜100mでまた同じように増加…」を無限に繰り返すノコギリ波にしている(例: 49m時点で49匹前後 → 50mで10匹に戻る → 51〜100mでまた10→50)。現在の値は `MIN_DOGS=10`/`MAX_DOGS=50`/`DOG_CYCLE_LENGTH_M=50`。
+
+- **匹数が減る場合の間引き**(2026-08-08、3回修正): 以前は`ensureDogPopulation()`が匹数を増やす処理しか無く、目標が減っても`dogs`配列は縮まなかった(ノコギリ波の谷が見た目に一切反映されないバグ)。
+  1. 目標より多い時に`dogs.length = target`で即座に切り詰める修正 → 画面内で走っている最中の犬まで瞬間的に消えてしまい不自然だった
+  2. `updateDogs()`側で犬が画面のかなり後方(`REMOVE_BUFFER`分)まで流れて**本来リサイクル(前方への再配置)されるタイミング**になった時だけ、その時点で`dogs.length > target`なら再配置せず`dog.gone = true`にして退場させる方式に変更(ループ後に`dogs = dogs.filter(d => !d.gone)`) → 走行中の犬が急に消える問題は直ったが、犬は`resetDog()`のたびにカメラのすぐ先(最大1000px程度前方)へ再配置され続けるため、リサイクル対象になるまでにカメラがさらに1000〜2000px(≒10〜14m)進む必要があり、「51mを超えてしばらく待っても匹数がほぼ変わらない」という別の問題が発覚
+  3. `ensureDogPopulation()`側に「画面にまだ映っていない(プレイヤーが一度も見ていない)犬は即座に間引いてよい」処理を追加(`isDogOnScreen()`で判定、超過分だけ`dogs`から即座にfilterで取り除く)。画面内に実際に見えている犬だけは②の「自然にリサイクルタイミングで退場」に任せる → ここまでで縦方向(カメラの前後移動)による退場は改善したが、**犬は左右の画面端に達すると反対側から無条件にラップ(再出現)し続ける**ため、縦に動かない(=自機がほぼ静止している)状況では同じ犬がいつまでも左右往復して見え続ける、という指摘が入った
+  4. **最終版**: `updateDogs()`の左右ラップ処理自体に手を入れた。犬が画面端に達してラップしようとする瞬間、その時点で`dogs.length > target`(匹数超過)なら、反対側から再出現させずに`dog.gone = true`として退場させる(ループ末尾の`filter`で除去)。ラップしない(超過していない)時は従来通り反対側から再出現する。これにより「奥に進まなくても、超過している犬は次に画面端まで来たタイミングで再出現せずそのまま消える」という、まさに要望通りの挙動になった。実測: 51m到達直後17匹(縦方向の即時間引き分は反映済み) → **自機を一切動かさなくても**、左右ラップだけで1秒以内に目標値(11匹)へ正確に収束した
+
+犬の速度もゆるやかに距離依存で上がる(`resetDog` 内、`260 + min(140, distanceM*0.8) + random(0,120)` px/s)。
+
+### デバッグ表示(2026-08-08 追加)
+
+画面左上に `#dog-debug`(「画面内の犬: N / 目標M」)を常時表示している。**`N`は`dogs`配列の総数(プールの内部保持数)ではなく、`isDogOnScreen()`で実際に画面内にいると判定された犬だけの数**(2026-08-08 修正。最初は`dogs.length`をそのまま出していたが、それだと画面外で待機中の犬も含んでしまい「画面に表示されている数」という要望とズレていた)。ゲームループ内で毎フレーム `dogDebugActualEl.textContent = dogs.filter(d => isDogOnScreen(d, camera.top)).length` / `dogDebugTargetEl.textContent = targetDogCount(distanceM)` を更新しているだけ。上記のノコギリ波・間引きロジックの検証用。不要になったら `#dog-debug` の HTML/CSS とこの2行を消せばよい。
+
+## コイン(収集アイテム、2026-08-08 追加)
+
+- 画像は `imgs/coins.png`。回転アニメ10コマが横に並んだ1枚のスプライトシート(白背景)。シート全体を1枚の`chromaKeyToCanvas`済みcanvas(`coinSheet`)としてキャッシュし、描画時に`drawImage`のソース矩形指定でコマを切り出している(犬のようにコマごとにcanvasを分けていない)
+- コマ幅は等間隔ではない(素材側でコマごとに絵の幅が違う)ため、`COIN_FRAMES`(`[{x, w}, ...]`。各コマの開始x位置と幅の配列、要素数=`COIN_FRAME_COUNT`)で管理している(2026-08-08 追加)。現状の数値は仮の等間隔値で、実際の見た目に合わせて調整が必要(値の調整はコード変更不要、配列の中身を書き換えるだけでよい)。高さ(`coinFrameH`)は全コマ共通想定。描画先の幅も`f.w * COIN_SCALE`でコマごとに変わるので、コインは回転で見かけの幅が変化しながらアニメする
+- 犬とは背景色が違う(白 `RGB(255,255,255)`)ので、`chromaKeyToCanvas(img, keyColor, threshold, feather)`は色・しきい値を引数で差し替えられるよう汎用化してある(元は犬専用でDOG_KEY_*固定だった)。**罠**: `imgs.map(chromaKeyToCanvas)` のように関数を直接`Array.map`に渡すと、`map`が渡す第2引数(インデックス)が`keyColor`に化けて透過が壊れる(実際に一度この不具合を踏んだ)。必ず `imgs.map((img) => chromaKeyToCanvas(img))` のようにラップすること
+- コインは**動かない**(静止して回転アニメのみ)。`COIN_COUNT=12`枚を常にプール管理(`coins`配列)し、犬と同様にカメラ前方の未表示エリアにランダム配置 → 回収されるか画面後方に流れたら`resetCoin()`で再配置、を繰り返す(`ensureCoinPopulation`/`updateCoins`)
+- **磁石式の当たり判定**: プレイヤーとの距離が`MAGNET_RADIUS=72px`(自キャラ直径36pxのおよそ2倍)以内に入ると`coin.magnetized=true`になり、以後そのコインはプレイヤーに向かって加速しながら吸い寄せられる(`pullSpeed`は距離が近いほど速くなる)。`COLLECT_DIST=16px`まで近づいたら獲得(`currentCoins++`)してその場で再配置
+- 犬と同じ`drawShadow()`で足元に影を描いている(2026-08-08 追加)。ただし影の中心をコインの接地点からそのまま置くとコイン本体の真下に完全に隠れて見えなくなるため、`groundScreenY + coinDestH * 0.55` と少し下にずらして裾からのぞくようにしている。ばらまき演出中は`hopZ`分浮いた実際のコイン位置とは別に、影は接地点(`groundScreenY`、`hopZ`を含まない)に描かれるので、犬の影と同様「本体が跳ねても影は地面に残る」表現になる
+- **描画の重なり順(2026-08-08 追加)**: 犬と同様、描画直前に`coins.slice().sort(...)`でソートしてから描く。ソートキーは`worldY`に加えて、ばらまき演出中の疑似的な高さ(`coin.scatter.hopZ`)も足したもの(`worldY + hopZ`)。より高く跳ねている(浮いている)コインほど手前に来るように扱っており、25〜50枚が入り乱れてバウンドする際に自然な重なりになる
+- 獲得数は`currentCoins`。ライフを失っても引き継がれ、`resetGame()`(ゲームオーバーからのリスタート、または初回ロード)でのみ0に戻る(2026-08-08、ライフ制導入に伴い変更。以前は毎回のミスでリセットしていた)。HUDに常時表示(`#hud`の「コイン: N枚」)し、`triggerMiss()`の時点で`#miss-overlay`にも「コイン: N枚」を表示する(距離と同様、`frozen`中は`updateCoins`を呼ばないので獲得数もその瞬間の値で固定される)
+- 風船(後述)がライフ満タン時にばらまく特別なコインは `coin.bonus = true` を持つ。通常のコインは獲得後 `resetCoin()` でプールに戻って使い回されるが、`bonus` なコインは獲得したらそのまま配列から取り除かれて消える(`updateCoins()` 内、`coin.gone` を立ててからループの外でまとめて `filter`)。`COIN_COUNT` の通常プール数には数えない一過性のボーナス
+  - **過去のバグ(2026-08-08 修正)**: 画面後方へ流れて誰にも回収されなかったコインを再配置する処理(`else if (coin.worldY > camBottom + REMOVE_BUFFER)`)が、`bonus` かどうかを見ずに一律 `resetCoin()` していた。`resetCoin()` は `bonus` フラグを消さないため、取りこぼされたボーナスコインが消えずに**通常コインのふりをしてプールに居座り続け**、`COIN_COUNT` を超えて際限なく増えていった(風船を割るたびに最大`BALLOON_SCATTER_COINS`枚ずつ蓄積)。「`COIN_COUNT`だけで発生数を説明できるはずなのに実際は大量に湧く」という形で発覚。修正後は `bonus` なコインもこの分岐で `coin.gone = true` にして確実に消えるようにした
+
+## 風船(回復 or コインばらまき、2026-08-08 追加)
+
+- 画像は `imgs/balloon-red.png`。**元から透過済みのPNG**(コーナーのアルファが0)なので、犬やコインと違ってクロマキー処理は不要。`loadImage()`で読み込んだ`Image`をそのまま`wctx.drawImage()`に渡している
+- 一定距離ごとに1つだけ出現する(同時に複数は存在しない)。`BALLOON_SPAWN_DISTANCE_M=25`(m)ごとに次の出現距離(`nextBalloonDistanceM`)を判定し、`ensureBalloon(distanceM)`が`balloon===null`かつ距離条件を満たした時にだけ生成する。ライフを失うと`resetBalloon()`で`nextBalloonDistanceM`も含めて初期状態に戻る(1ライフごとに25m,50m,75m...と出現し直す)
+- **動きはワールド座標ベース(2026-08-08 変更)**: 以前は「画面の上端〜下端を固定秒数で機械的に落ちる」カメラ基準の実装だったが、「自機が奥へ進む(前進する)のと連動して画面下へ近づいてくる」という要望に合わせて、犬やコインと同じくワールドY座標(`balloon.worldY`)を持つ方式に変更した。`screenY = balloon.worldY - camera.top` で毎フレーム描画位置を出すので、`camera.top`が減る(=自機が前進する)ほどそのまま`screenY`が増えて画面下へ流れてくる。自機が止まっていても`BALLOON_APPROACH_SPEED=18px/s`ぶんだけ`balloon.worldY`を毎フレーム増やしていて、ゆっくり自機に近づき続ける演出を足してある(`updateBalloon()`)。横方向は `baseX + sin(swayPhase)*BALLOON_SWAY_AMP` でサインカーブに揺れながら蛇行する(`BALLOON_SWAY_AMP=55px`、`BALLOON_SWAY_SPEED=1.6rad/s`)。誰にも回収されないまま`screenY`が画面下端(`BASE_H`)を60px超えたら消える
+- 自キャラとの当たり判定は円同士(`BALLOON_R=26` + `player.r`。ダメージ判定の`PLAYER_HIT_R`ではなく見た目の半径を使っていて、ボーナスなので気持ち広め・取りやすくしてある)
+- **常に最前面**: `drawWorld()`内で`drawBalloon()`をコイン・犬より必ず後に呼んでいるので、Y-sortの結果に関わらず風船は犬やコインの手前に描かれる
+- 犬・コインと同じ`drawShadow()`で影を描いている(2026-08-08 追加)。風船の画像(300×600、紐が下に伸びた縦長のPNG)の下端(紐の先端)あたりを接地点とみなし、`screenY + h/2`(`h`=表示高さ)に影を置いている
+- 回収した瞬間の`collectBalloon()`:
+  - `hp < MAX_HP`(満タンでない)なら `hp += MAX_HP * BALLOON_HEAL_RATIO`(`BALLOON_HEAL_RATIO=0.25`。最大HPの25%回復、上限は`MAX_HP`でクランプ)
+  - `hp` が既に満タンなら、`BALLOON_SCATTER_COINS=25`枚のコイン(`coin.bonus=true`)をプレイヤー中心に円形に(半径`BALLOON_SCATTER_RADIUS=100px`のおよそ60〜100%の範囲)ばらまく。ばらまかれた瞬間は即座に回収されてしまうと味気ないので、`coin.pickupDelay = BALLOON_SCATTER_PICKUP_DELAY`(=1秒)を設定しておき、`updateCoins()`側で`pickupDelay > 0`の間は磁石判定自体をスキップする。1秒経過後に通常のコインと同様、磁石範囲内なら自動で吸い寄せられて回収される。通常コイン(`resetCoin()`)は常に`pickupDelay = 0`
+  - **ばらまき演出**: 各コインは自キャラの位置から目的地(上記の円周上の点)まで`SCATTER_FLIGHT_TIME`(0.6秒)かけて直線移動しつつ、`coin.scatter`オブジェクトが持つ`hopZ`(見た目だけの高さ)がハートの噴水と同じ重力式(`SCATTER_GRAVITY`で加速、地面`hopZ<=0`で反射)でポンポンと`SCATTER_BOUNCE_COUNT`回(2回)小さくバウンドする(`SCATTER_BOUNCE_DAMPING`で着地のたびに勢いが弱まる)。実際のワールド座標(磁石判定・当たり判定に使う`worldX`/`worldY`)は目的地への直線移動だけで決め、`hopZ`は`drawWorld()`の描画時に`screenY`から引いているだけの見た目専用の値(`updateCoinScatter()`)。バウンドが終わると`coin.scatter = null`になり、以降は普通の静止コインとして扱われる
+  - `updateCoinScatter()`の呼び出しは`updateCoinAnimation()`(回転アニメ担当、`frozen`中でも毎フレーム呼ばれる)側に移してある(2026-08-08)ので、**犬にぶつかってヒット硬直(`frozen`)中でもばらまきの放物線・バウンドは止まらない**。他の犬が動き続けるのと同じ扱い。止まるのは磁石での吸い寄せ・獲得判定(`updateCoins()`側、`!frozen`の時だけ呼ばれる)だけ
+- `ensureBalloon`/`updateBalloon`は犬やコインと同様、`frozen`(ヒット硬直中・ゲームオーバー中)の間は呼ばれないので、その間は出現も落下も止まる
+- **取得時のポップアップ表示**(2026-08-08 追加): 風船を取った場所(`balloonWorldPos()`で捕捉した座標)に、スーパーマリオの「1UP」を少し大きくしたような浮き上がるテキストを表示する。回復時は`LIFE UP!`(黄緑`#7cff6b`)、ボーナス時は`BONUS!`(金`#ffd54f`)。文字は太字22px、黒い縁取り(`strokeText`→`fillText`)で1UP風にしている。`spawnPopup()`で`popups`配列に積み、`updatePopups()`が`POPUP_RISE_SPEED=40px/s`でゆっくり上に浮かせながら`POPUP_LIFE=1.1秒`でフェードアウト・消滅させる。ハートと同じく`#fx-layer`(`drawFx()`内、`drawPopup()`)に描画しているのでプレイヤーや犬より手前に見える。`updatePopups()`は`frozen`中でも常に呼ばれる(ハートと同じ扱い)
+
+## 衝突判定・ヒット/ライフ/残機(2026-08-08 大幅刷新)
+
+以前は「犬に触れたら即ミス→スタート地点にリセット」だったが、**ライフゲージ+残機制**に変更した。犬に触れても即死せず、ライフを削りながら何度か続行でき、ライフを使い切った時だけ1ライフ(=1回分の距離の記録)を失う。
+
+### 当たり判定
+
+- 円(プレイヤー)と矩形(犬の当たり判定ボックス)の当たり判定 (`circleRectHit`)。判定ボックスは横 `dogFrameW*0.55`、縦は画像の上から`HIT_TOP_RATIO`〜`HIT_BOTTOM_RATIO`の範囲
+- プレイヤー側は見た目・移動クランプ用の `player.r`(=18)と、当たり判定専用の `PLAYER_HIT_R = player.r * 0.8` を別々に持つ。`checkCollision()` は `PLAYER_HIT_R` を使うので見た目より一回り小さい判定になる
+- `checkCollision()` は無敵中(`performance.now() < invincibleUntil`)は何もしない
+- **画面最下部の安全地帯**(2026-08-08 追加): `player.worldY > camera.top + BASE_H - BOTTOM_SAFE_ZONE_PX`(=60px)の間、つまり自機が現在の画面の一番下寄りにいる間は`checkCollision()`が丸ごと何もしない。カメラは前方にしか進まないので「スタート地点から3m以内は安全」のような固定の安全地帯とは違い、**常にその時点の画面最下部が安全**になる(プレイヤーが下がって犬をやり過ごす、という退避行動が成立する)
+
+### ヒット(`triggerMiss(dog)`)
+
+犬に接触すると即ミスにはせず、次のことが起きる:
+
+- `hp` が `HP_DAMAGE_PER_HIT`(=最大HPの25%)減る。`MAX_HP=100` なので4発で0になる計算
+- `bestScore = Math.max(bestScore, currentScore)` でベスト距離を更新(このゲーム全体を通しての最高値。ライフを失っても残機を失ってもリセットされない)
+- ぶつかった犬だけ `dog.stopped = true` でその場に静止させ、他の犬は動き続ける・匹数も増え続ける(従来通り)
+- `frozen = true` になり、プレイヤーは移動できなくなる。CSSの `.hit`(赤く拡大)と `.licked`(震え)、ピンクのハートの噴水(`missFX`/`hearts`、`#fx-layer`に描画)が発生 — このあたりの演出そのものは以前と同じ
+- `HIT_RECOVER_MS`(3000ms)後に自動で `recoverFromHit()` を呼ぶ `setTimeout` をセットする(`hitRecoverTimer`)
+
+### 復帰(`recoverFromHit()`)— 3秒 or 入力、早い方
+
+`tryResume()` が呼ばれると(後述のタップ/キー/ジョイスティック入力から)、`RESUME_GRACE_MS`(500ms)経過していれば `recoverFromHit()` を呼ぶ。`hitRecoverTimer` のタイムアウトからも同じ関数が呼ばれる(先に入力で復帰していた場合は `if (!frozen) return;` で二重発火を防止)。
+
+- **`hp` がまだ残っていれば**: `frozen = false` にして操作を返し、`invincibleUntil = now + INVINCIBLE_MS`(2000ms)で無敵時間に入る。無敵中は `checkCollision` が無視され、`#player.invincible` の点滅アニメ(`blink-invincible`)が付く。**距離・コインはそのまま**(リセットしない)。ぶつかった犬(`missFX.dog`)も `dog.stopped = false` に戻して再び走り出させる(2026-08-08 修正。以前はここで戻し忘れていて、一度ぶつかった犬がその後ずっと静止したままになるバグがあった)
+- **`hp` が0なら**: `lives -= 1`。残機がまだあれば `resetLife()`(距離だけ0に戻す。位置・カメラ・犬・コインの配置も初期化するが、**コインの獲得枚数(`currentCoins`)は引き継ぐ**)。残機も0なら `triggerGameOver()`
+
+### 入力での復帰トリガー(`tryResume()`)
+
+以下のいずれかで `tryResume()` が呼ばれる:
+- `viewportEl` への `pointerdown`(タップ/クリック)
+- WASDキーの**押し直し**(ヒット発生時点で押されていたキーではダメ。`staleKeysAtMiss` + `e.repeat` でガードしていて、離してから押し直す必要がある。既存のキー入力復帰ロジックをそのまま踏襲)
+- nipplejs の `move` イベント(ジョイスティック操作。こちらは「離して操作し直す」判定はしていない、動かせば即トリガー)
+
+`tryResume()` 自身は `frozen`/`gameOver` の状態を見て `recoverFromHit()` か `resetGame()`(ゲームオーバー時)のどちらを呼ぶか振り分ける。
+
+### ライフを失う・ゲームオーバー
+
+- `resetLife()`: 1ライフ分のスタートリセット。`player`位置・`camera`・`lanes`・`dogs`・`coins`の配置・`hearts`・距離(`currentScore`)・`hp`(満タンに戻す)・`invincibleUntil`をリセット。**`currentCoins`(コイン枚数)と`lives`(残機数)はここでは触らない**(引き継ぐ)
+- `triggerGameOver()`: `gameOver = true`(`frozen`はtrueのまま維持し続けるので、以後 `checkCollision`/移動は動かない)。`#gameover-overlay` を表示し、`bestScore`(ベスト距離)と `currentCoins`(コイン枚数)を表示
+- `resetGame()`: 新しいゲームを最初から始める。`lives = START_LIVES`(=3)、`currentCoins = 0` にリセットしてから `resetLife()` を呼ぶ。初回ロード時と、ゲームオーバー画面でのタップ/キー入力(`tryResume()`経由)で呼ばれる
+
+### HUD
+
+- 画面上部中央に `#life-hud`(`#life-bar-track`+`#life-bar-fill` のゲージと `#lives-text` の残機数「残機×N」)。バーの色はHPに応じて緑(`>50%`)→黄(`>25%`)→赤に変化。ゲームループ内で毎フレーム `hp`/`lives` から更新している
+- 距離・ベスト距離・コイン枚数は従来通り右上の `#hud`
+
+## 画面サイズとリサイズの扱い(2026-08-08 追加)
+
+ウィンドウをリサイズしても**ゲームロジック上の見える範囲(論理解像度)は変わらない**。`BASE_W = 800` / `BASE_H = 600` の固定値(2026-08-08: 初回ウィンドウサイズから決め打ちの定数に変更)を使い、以後のゲームロジック(プレイヤーの可動範囲、カメラ計算、犬の生成範囲、キャンバスの実サイズなど)は全てこの `BASE_W`/`BASE_H` を基準にする。`window.innerWidth`/`innerHeight` を直接参照している箇所はない。
+
+表示側は `#viewport`(100vw/100vh、`overflow:hidden`)の中に `#game`(`BASE_W×BASE_H`の固定サイズ)を中央配置し、`applyViewportScale()` が `resize` イベントのたびに
+```js
+scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H)
+```
+を計算して `#game` に `transform: translate(-50%,-50%) scale(scale)` を適用する。アスペクト比を保ったまま画面いっぱいに収まるように縮小/拡大するだけで、余った部分は `body` の背景色(芝生と同じ `#7ec850`)がそのまま見えるので不自然な余白にならない(レターボックス)。
+
+犬・プレイヤー・文字などのサイズは現状 `BASE_W/BASE_H` 基準で固定値のままなので、画面が縮小されると相対的に小さく見える。サイズ感の微調整はまだ未着手(ユーザー側で今後調整予定)。
+
+## 効果音(SE、2026-08-08 追加)
+
+- `SE/` フォルダの音声ファイルを使用。犬出現音は `SE/dog01.mp3`〜`dog08.mp3` の8種類(`SE_DOG_SRCS`)、コイン獲得音は `SE/coin.mp3`(`SE_COIN_SRC`)
+- 各音声は`new Audio(src)`で1つずつ事前に読み込んでおき(`seDogAudios`/`seCoinAudio`)、実際に鳴らす瞬間は`cloneNode()`した複製を`play()`する(`playSE()`)。同じ音が重なって再生されても互いを止めてしまわないようにするための定番手法
+- **音量**は`DOG_SE_VOLUME`(=0.6)/`COIN_SE_VOLUME`(=0.8)で調整する(2026-08-08 追加。それまでは音量指定が無く`new Audio()`のデフォルト値=最大の1.0のまま鳴っていた)。元の`Audio`に`.volume`をセットしておくだけでなく、`playSE()`内で複製(`cloneNode()`)にも明示的に`.volume`をコピーしている点に注意。`cloneNode()`は`src`などのHTML属性は複製するが、`volume`はJSのプロパティのみで元々の実装ではコピーされない(実機でも複製側は常にデフォルト値の1.0のまま再生されてしまう)ため、コピーし忘れると音量指定が効かなくなる
+- **犬出現時**: 犬は画面の左右端に達すると反対側へラップする(`updateDogs()`、`dog.worldX`が`-half`または`BASE_W+half`を超えたら反転)。**このラップの瞬間、かつその犬が縦方向にも画面内(見えている状態)の時だけ**`playDogSE()`を呼ぶ(2026-08-08 最終版)。「画面の横から犬が出てきた時に鳴らす」という要望どおり、画面外(縦位置がまだ見えていない)でのラップでは鳴らない。8種類から`Math.random()`で選ぶが、直前(`lastDogSEIndex`)と同じインデックスを引いた場合は`(idx + 1 + ランダムオフセット) % 8`で必ず別の音にずらす(連続再生の防止)
+  - **試行錯誤の経緯(2026-08-08)**: ①最初は`resetDog()`(プールへの新規追加/画面後方から前方の未生成エリアへの再配置)のタイミングで鳴らしていたが、これは**まだ画面に見えていない**タイミングであり、体感よりかなり少なかった → ②`dog.visible`(画面内フラグ)が`false→true`に変わった瞬間に鳴らす方式に変更したが、犬は横移動しかせず縦(奥行き)には動かないため、**自機が完全に停止しているとカメラ(`camera.top`)が動かず、どの犬の`screenY`も変化せず一切鳴らなくなる**という問題が発覚 → ③一旦カメラに依存しない時間経過ベースの`updateDogBark()`(1.2〜3秒間隔のアンビエント再生)にしたが、「画面横から犬が出てきた時」という本来の要望とはズレていた → ④最終的に犬自身の左右ラップ移動(自機の移動状況に関係なく常に起きる)をトリガーにすることで、「実際に画面端から犬が現れる瞬間」と「自機静止中でも鳴り続く」を両立させた。静止中でも画面内に犬がいれば12秒で7回鳴ることを確認済み
+- **コイン獲得時**: `playCoinSE()`が`updateCoins()`内の獲得判定(`currentCoins++`の直後)で呼ばれる。`lastCoinSEAt`(直前に鳴らした`performance.now()`)から`COIN_SE_MIN_INTERVAL_MS`(=100ms)未満なら再生をスキップする。磁石でまとめて複数枚回収される時(特に風船ばらまき後)に音が過剰に重ならないようにするための間引き
+- ページ読み込み直後などユーザー操作前は、ブラウザの自動再生ポリシーで`play()`が失敗することがあるが、`playSE()`内で`.catch(() => {})`しているのでゲーム進行やコンソールエラーには影響しない
+
+## BGM(2026-08-08 追加)
+
+- `SE/iwashiro_kokage_biyori.mp3` を`bgmAudio`(`loop = true`)としてループ再生する。音量はSEと同じパターンで`BGM_VOLUME`(=0.3)を定数で管理し、`bgmAudio.volume`にセットしている
+- ブラウザの自動再生ポリシー対策として、ページ読み込み時に`startBGM()`を一度試すのに加え、`keydown`/`viewportEl`への`pointerdown`/nipplejsの`move`(仮想ジョイスティック操作)の各ハンドラの先頭でも`startBGM()`を呼んでいる。`startBGM()`は`bgmStarted`フラグで多重再生を防いでいて、`bgmAudio.play()`が成功した時だけ`true`になる。失敗(自動再生ブロック)した場合は何度でも次の操作で再試行される(SEと違い`cloneNode()`はしない。BGMは1つのインスタンスをそのままループさせ続けるだけでよい)
+- Playwrightで「最初の`play()`だけ失敗させて以降は成功させる」という自動再生ブロックのシミュレーションを行い、①操作前は鳴らない、②最初の操作で鳴り始める、③その後の操作では余計に`play()`を呼び直さない、の3点を確認済み
+
+## タブが非アクティブになった時の一時停止(2026-08-08 追加)
+
+- `document.addEventListener('visibilitychange', ...)` で監視し、`document.hidden` が`true`になったら`gamePaused = true`にして`bgmAudio.pause()`を呼ぶ。`document.hidden`が`false`に戻ったら`gamePaused = false`にし、`bgmStarted`が`true`(=BGMが開始済み)なら`bgmAudio.play().catch(() => {})`で再開する
+- ゲームループ`loop(now)`の先頭で`gamePaused`なら`requestAnimationFrame(loop)`だけ呼んで即`return`する。これにより犬・コイン・プレイヤー移動・当たり判定・HUD更新など全ての状態更新が非アクティブ中は完全に止まる
+- 再アクティブ時に`last = performance.now()`でdtの基準をリセットしている。これをしないと非アクティブだった間の経過時間がまるごと次フレームの`dt`に乗ってしまい、プレイヤーが一瞬でワープしたり当たり判定がおかしくなったりする(既存の`dt > 0.05`のクランプだけでは長時間放置に対応できないため)
+- Playwrightでは実際のOSレベルのタブ切り替えは発生させられないため、`Object.defineProperty(document, 'hidden', {value: true, configurable: true})`で`document.hidden`を上書きしてから`document.dispatchEvent(new Event('visibilitychange'))`を手動発火させることでシミュレートしている。`HTMLMediaElement.prototype.play`/`pause`をスパイして、非アクティブ化時に`pause()`が1回、再アクティブ化時に`play()`が1回呼ばれること、および非アクティブ中は`player.worldY`が全く変化しないことを確認済み
+
+## 50mごとの昼/夕方カラーフィルター(2026-08-08 追加)
+
+- `#daynight-overlay`という`#game`いっぱいに重なる`div`(`background: #ff8a3d`、`z-index: 9`、`pointer-events: none`)を用意し、`opacity`をフレームごとに書き換えることで画面全体に色フィルターをかけている
+- `computeDuskAmount(distanceM)`が「0(昼)〜1(夕方)」を返す。`DAYNIGHT_CYCLE_M`(=50m)ごとに昼⇔夕方が交互に切り替わる(0〜50mが昼、50〜100mが夕方、100〜150mが昼…)。境界の前後`DAYNIGHT_BLEND_M`(=6m)だけ線形に滑らかにブレンドし、パキッと切り替わらないようにしている
+- ゲームループ内で`daynightOverlayEl.style.opacity = computeDuskAmount(distanceM) * DUSK_MAX_OPACITY`をセットしている。`DUSK_MAX_OPACITY`(=0.2)は「少しだけ夕方っぽく」という要望に合わせた控えめな上限値で、昼は完全に元の見た目(opacity 0)のまま
+- Playwrightで`computeDuskAmount`を複数の距離(0, 40, 44, 47, 49.9, 50, 70, 94, 97, 99.9, 100, 144, 150m)でサンプリングし、期待通りの台形波(境界だけ滑らかな0/1の交互パターン)になっていることを確認済み。また実際に`player.worldY`を書き換えて70m地点・20m地点それぞれで`daynightOverlayEl.style.opacity`が期待値(0.2 / 0)になることも確認済み
+
+## 今後の予定・未実装
+
+- **サイズ調整**: リサイズ時のスケーリング基盤はできたが、`DOG_SCALE` やプレイヤー半径・フォントサイズなど個々の大きさはまだ調整していない
+
+## 動作確認について
+
+このプロジェクトには開発サーバーの設定がない(静的HTML)。`file://` で直接開くとクロマキー処理(`canvas.getImageData`)がブラウザのセキュリティ制限で失敗することがあるため、簡易HTTPサーバー経由で確認すること(VSCode Live Server、`npx serve .` など)。動作確認には Playwright + Chromium を使うのが手軽(`frozen`/`player.worldY`/`dogs`/`hearts` などトップレベルの `let`/`const` はグローバル扱いなので `page.evaluate()` から直接読み書きしてデバッグ可能)。

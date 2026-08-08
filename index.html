@@ -12,22 +12,64 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #1e1e1e;
+    background: #7ec850;
     touch-action: none;
   }
-  #game {
+  #viewport {
     position: relative;
     width: 100vw;
     height: 100vh;
+    overflow: hidden;
+  }
+  #game {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform-origin: center center;
+  }
+  #world {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
   }
   #player {
     position: absolute;
-    width: 40px;
-    height: 40px;
-    margin-left: -20px;
-    margin-top: -20px;
+    width: 36px;
+    height: 36px;
+    margin-left: -18px;
+    margin-top: -18px;
     border-radius: 50%;
-    background: #4caf50;
+    background: #ffca28;
+    border: 3px solid #6d4c00;
+    box-sizing: border-box;
+    transition: transform 0.15s ease;
+    z-index: 5;
+  }
+  #player.hit {
+    background: #ff5252;
+    transform: scale(1.3);
+  }
+  #player.licked {
+    animation: lick-wiggle 0.18s infinite;
+  }
+  @keyframes lick-wiggle {
+    0%, 100% { transform: scale(1.15) translate(0, 0) rotate(0deg); }
+    20% { transform: scale(1.15) translate(-3px, 2px) rotate(-8deg); }
+    40% { transform: scale(1.15) translate(3px, -2px) rotate(7deg); }
+    60% { transform: scale(1.15) translate(-3px, -2px) rotate(-6deg); }
+    80% { transform: scale(1.15) translate(3px, 2px) rotate(8deg); }
+  }
+  #fx-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 5;
   }
   /* スマホでジョイスティックを認識する範囲(左下エリア)。デバッグ用に薄く表示 */
   #joystick-zone {
@@ -37,42 +79,249 @@
     width: 50%;
     height: 50%;
     background: rgba(255, 255, 255, 0.03);
+    z-index: 4;
   }
   #hint {
     position: absolute;
     top: 10px;
     left: 10px;
-    color: #ccc;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
     font-family: sans-serif;
-    font-size: 14px;
+    font-size: 13px;
+    max-width: calc(100% - 130px);
+    line-height: 1.4;
+    z-index: 6;
+  }
+  #dog-debug {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: #ffeb3b;
+    background: rgba(0, 0, 0, 0.45);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+    z-index: 6;
+  }
+  #hud {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+    font-family: sans-serif;
+    font-size: 18px;
+    font-weight: bold;
+    text-align: right;
+    z-index: 6;
+  }
+  #hud .best {
+    font-size: 13px;
+    font-weight: normal;
+    opacity: 0.85;
+  }
+  #miss-overlay {
+    position: absolute;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #ff5252;
+    font-family: sans-serif;
+    font-size: 42px;
+    font-weight: bold;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.7);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s ease;
+    z-index: 7;
+  }
+  #miss-overlay.show {
+    opacity: 1;
+  }
+  #miss-overlay .tap-hint {
+    display: block;
+    margin-top: 8px;
+    color: #fff;
+    font-size: 16px;
+    font-weight: normal;
+  }
+  #miss-overlay .miss-coin-score {
+    display: block;
+    margin-top: 10px;
+    color: #ffd54f;
+    font-size: 22px;
+    font-weight: bold;
+  }
+  #life-hud {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 6;
+  }
+  #life-bar-track {
+    width: 180px;
+    height: 16px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 2px solid rgba(255, 255, 255, 0.7);
+    border-radius: 8px;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  #life-bar-fill {
+    height: 100%;
+    width: 100%;
+    background: #4caf50;
+    transition: width 0.2s ease, background-color 0.2s ease;
+  }
+  #lives-text {
+    color: #fff;
+    font-family: sans-serif;
+    font-size: 15px;
+    font-weight: bold;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    white-space: nowrap;
+  }
+  @keyframes blink-invincible {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0.25; }
+  }
+  #player.invincible {
+    animation: blink-invincible 0.2s steps(1, end) infinite;
+  }
+  #gameover-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-family: sans-serif;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 8;
+  }
+  #gameover-overlay.show {
+    opacity: 1;
+  }
+  #gameover-overlay .go-title {
+    font-size: 40px;
+    font-weight: bold;
+    color: #ff5252;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.7);
+  }
+  #gameover-overlay .go-stats {
+    display: block;
+    margin-top: 8px;
+    font-size: 20px;
+    font-weight: bold;
+  }
+  #gameover-overlay .tap-hint {
+    display: block;
+    margin-top: 22px;
+    font-size: 16px;
+    opacity: 0.85;
+  }
+  #daynight-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #ff8a3d;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 9;
   }
 </style>
 </head>
 <body>
-<div id="game">
-  <div id="player"></div>
-  <div id="joystick-zone"></div>
-  <div id="hint">PC: WASD で移動 / スマホ: 画面左下をドラッグ</div>
+<div id="viewport">
+  <div id="game">
+    <canvas id="world"></canvas>
+    <div id="player"></div>
+    <canvas id="fx-layer"></canvas>
+    <div id="joystick-zone"></div>
+<!--
+    <div id="hint">WASD / 画面左下ドラッグで移動・奥(上)へ進もう。犬にぶつかるとミス!</div>
+-->
+    <div id="dog-debug">画面内の犬: <span id="dogDebugActual">0</span> / 目標<span id="dogDebugTarget">0</span></div>
+    <div id="life-hud">
+      <div id="life-bar-track"><div id="life-bar-fill"></div></div>
+<!--
+      <div id="lives-text">残機×<span id="livesCount">3</span></div>
+-->
+    </div>
+    <div id="hud">距離: <span id="score">0</span>m<br><span class="best">ベスト: <span id="best">0</span>m</span><br>コイン: <span id="coinScore">0</span>枚</div>
+    <div id="miss-overlay">ミス!<span class="miss-coin-score">コイン: <span id="missCoinScore">0</span>枚</span><span class="tap-hint">移動 or 約3秒で復帰</span></div>
+    <div id="gameover-overlay">
+      <span class="go-title">ゲームオーバー</span>
+      <span class="go-stats">ベスト距離: <span id="goDistance">0</span>m</span>
+      <span class="go-stats">コイン: <span id="goCoins">0</span>枚</span>
+      <span class="tap-hint">タップして最初から</span>
+    </div>
+    <div id="daynight-overlay"></div>
+  </div>
 </div>
 
 <script>
-  const player = document.getElementById('player');
+  const viewportEl = document.getElementById('viewport');
+  const gameEl = document.getElementById('game');
+  const playerEl = document.getElementById('player');
   const zone = document.getElementById('joystick-zone');
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const coinScoreEl = document.getElementById('coinScore');
+  const missCoinScoreEl = document.getElementById('missCoinScore');
+  const missEl = document.getElementById('miss-overlay');
+  const lifeBarFillEl = document.getElementById('life-bar-fill');
+  // const livesCountEl = document.getElementById('livesCount');
+  const gameOverEl = document.getElementById('gameover-overlay');
+  const goDistanceEl = document.getElementById('goDistance');
+  const goCoinsEl = document.getElementById('goCoins');
+  const dogDebugActualEl = document.getElementById('dogDebugActual');
+  const dogDebugTargetEl = document.getElementById('dogDebugTarget');
+  const daynightOverlayEl = document.getElementById('daynight-overlay');
 
-  let x = window.innerWidth / 2;
-  let y = window.innerHeight / 2;
-  const speed = 300; // px/sec
+  // --- 論理解像度を初回起動時のウィンドウサイズに固定し、以降のリサイズは拡大縮小のみで対応する ---
+  const BASE_W = 800;
+  const BASE_H = 600;
+  gameEl.style.width = BASE_W + 'px';
+  gameEl.style.height = BASE_H + 'px';
+
+  function applyViewportScale() {
+    const scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
+    gameEl.style.transform = `translate(-50%, -50%) scale(${scale})`;
+  }
+  window.addEventListener('resize', applyViewportScale);
+  applyViewportScale();
+
+  const speed = 180; // px/sec
 
   // --- キーボード(WASD)入力 ---
   const keys = { w: false, a: false, s: false, d: false };
 
   window.addEventListener('keydown', (e) => {
+    startBGM();
     const k = e.key.toLowerCase();
-    if (k in keys) keys[k] = true;
+    if (!(k in keys)) return;
+    keys[k] = true;
+    // ミス直後に押しっぱなしだったキーでは再開しない。離して押し直した時だけ再開を試みる
+    if (!e.repeat && !staleKeysAtMiss.has(k)) tryResume();
   });
   window.addEventListener('keyup', (e) => {
     const k = e.key.toLowerCase();
-    if (k in keys) keys[k] = false;
+    if (!(k in keys)) return;
+    keys[k] = false;
+    staleKeysAtMiss.delete(k);
   });
 
   function keyboardVector() {
@@ -97,34 +346,1006 @@
   let joyVector = { x: 0, y: 0 };
 
   manager.on('move', (evt, data) => {
+    startBGM();
     if (data.vector) {
       // nipplejsのyは上が+なので、画面座標(下が+)に合わせて反転
       joyVector = { x: data.vector.x, y: -data.vector.y };
+      tryResume(); // ヒット硬直中はジョイスティック操作でも復帰できるようにする
     }
   });
   manager.on('end', () => {
     joyVector = { x: 0, y: 0 };
   });
 
+  // --- 効果音(SE) ---
+  const SE_DOG_SRCS = [
+    'SE/dog01.mp3', 'SE/dog02.mp3', 'SE/dog03.mp3', 'SE/dog04.mp3',
+    'SE/dog05.mp3', 'SE/dog06.mp3', 'SE/dog07.mp3', 'SE/dog08.mp3',
+  ];
+  const SE_COIN_SRC = 'SE/coin.mp3';
+  const COIN_SE_MIN_INTERVAL_MS = 50; // 同じSEを鳴らしてから最低これだけ間を空ける
+  const DOG_SE_VOLUME = 0.07; // 犬の鳴き声の音量(0〜1)
+  const COIN_SE_VOLUME = 0.9; // コイン獲得音の音量(0〜1)
+
+  // 元となるAudioを1つずつ読み込んでおき、鳴らす瞬間はcloneNode()した複製を再生する。
+  // こうすることで同じ音同士が重なって鳴ってもお互いを止めずに済む(HTML Audioでの定番の手法)
+  const seDogAudios = SE_DOG_SRCS.map((src) => {
+    const a = new Audio(src);
+    a.preload = 'auto';
+    a.volume = DOG_SE_VOLUME;
+    return a;
+  });
+  const seCoinAudio = new Audio(SE_COIN_SRC);
+  seCoinAudio.preload = 'auto';
+  seCoinAudio.volume = COIN_SE_VOLUME;
+
+  function playSE(baseAudio) {
+    const node = baseAudio.cloneNode();
+    node.volume = baseAudio.volume; // cloneNode()はvolumeプロパティを引き継がないことがあるため明示的にコピーする
+    // ユーザー操作前の自動再生ブロックなどで失敗することがあるが、ゲーム進行には影響しないので無視する
+    node.play().catch(() => {});
+  }
+
+  let lastDogSEIndex = -1;
+  function playDogSE() {
+    let idx = Math.floor(Math.random() * seDogAudios.length);
+    if (seDogAudios.length > 1 && idx === lastDogSEIndex) {
+      idx = (idx + 1 + Math.floor(Math.random() * (seDogAudios.length - 1))) % seDogAudios.length;
+    }
+    lastDogSEIndex = idx;
+    playSE(seDogAudios[idx]);
+  }
+
+  let lastCoinSEAt = -Infinity;
+  function playCoinSE() {
+    const now = performance.now();
+    if (now - lastCoinSEAt < COIN_SE_MIN_INTERVAL_MS) return;
+    lastCoinSEAt = now;
+    playSE(seCoinAudio);
+  }
+
+  // --- BGM ---
+  const BGM_SRC = 'SE/iwashiro_kokage_biyori.mp3';
+  const BGM_VOLUME = 0.2; // BGMの音量(0〜1)
+
+  const bgmAudio = new Audio(BGM_SRC);
+  bgmAudio.loop = true;
+  bgmAudio.preload = 'auto';
+  bgmAudio.volume = BGM_VOLUME;
+
+  let bgmStarted = false;
+  function startBGM() {
+    if (bgmStarted) return;
+    // ブラウザの自動再生制限で最初は失敗しうるので、成功するまで各種ユーザー操作のたびに呼び直す
+    bgmAudio.play().then(() => { bgmStarted = true; }).catch(() => {});
+  }
+  startBGM(); // 読み込み直後にも一応試す(自動再生が許可されている環境向け)
+
+  // --- 犬(障害物)のスプライト読み込み ---
+  // 見た目のパターンを複数用意している(今のところ動きの違いはなし、見た目だけランダムに選ぶ)
+  const DOG_PATTERN_SRCS = [
+    ['imgs/1-1.png', 'imgs/1-2.png', 'imgs/1-3.png', 'imgs/1-4.png'],
+    ['imgs/2-1.png', 'imgs/2-2.png', 'imgs/2-3.png', 'imgs/2-4.png'],
+    ['imgs/3-1.png', 'imgs/3-2.png', 'imgs/3-3.png', 'imgs/3-4.png'],
+    ['imgs/4-1.png', 'imgs/4-2.png', 'imgs/4-3.png', 'imgs/4-4.png'],
+  ];
+  const DOG_KEY_COLOR = { r: 63, g: 200, b: 144 }; // 元画像の背景色
+  const DOG_KEY_THRESHOLD = 60;
+  const DOG_KEY_FEATHER = 40;
+  const DOG_SCALE = 0.3; // 犬の大きさは常に一定
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  // 単色背景を透過させたキャンバスを作る(クロマキー)。犬は緑背景、コインは白背景なので色を差し替えられるようにしてある
+  function chromaKeyToCanvas(img, keyColor = DOG_KEY_COLOR, threshold = DOG_KEY_THRESHOLD, feather = DOG_KEY_FEATHER) {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const cctx = c.getContext('2d');
+    cctx.drawImage(img, 0, 0);
+    const imageData = cctx.getImageData(0, 0, c.width, c.height);
+    const d = imageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const dr = d[i] - keyColor.r;
+      const dg = d[i + 1] - keyColor.g;
+      const db = d[i + 2] - keyColor.b;
+      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+      if (dist < threshold) {
+        d[i + 3] = 0;
+      } else if (dist < threshold + feather) {
+        d[i + 3] = Math.round(d[i + 3] * (dist - threshold) / feather);
+      }
+    }
+    cctx.putImageData(imageData, 0, 0);
+    return c;
+  }
+
+  let dogFrameSets = null; // 読み込み完了後、パターンごとに4コマ分のcanvas配列が入る([[c,c,c,c], [c,c,c,c]])
+  let dogFrameW = 0, dogFrameH = 0;
+
+  Promise.all(DOG_PATTERN_SRCS.map((srcs) => Promise.all(srcs.map(loadImage))))
+    .then((patternImgs) => {
+      dogFrameSets = patternImgs.map((imgs) => imgs.map((img) => chromaKeyToCanvas(img)));
+      // サイズは常に一定にするため、素材ごとの解像度差によらずパターン1の寸法を基準にする
+      dogFrameW = dogFrameSets[0][0].width * DOG_SCALE;
+      dogFrameH = dogFrameSets[0][0].height * DOG_SCALE;
+    })
+    .catch((err) => console.error('犬の画像読み込みに失敗しました', err));
+
+  // --- レーン(奥へ進むと生成される芝生の帯。見た目の縞模様とスコア単位のみに使用) ---
+  const LANE_H = 140; // 1レーン = スコア表示の1m
+  const GEN_BUFFER = 400;
+  const REMOVE_BUFFER = 400;
+
+  let lanes = [];
+  let nextLaneIndex = 0;
+
+  function createLane(index) {
+    return {
+      index,
+      laneTop: -(index + 1) * LANE_H,
+      laneBottom: -index * LANE_H,
+      shade: index % 2 === 0,
+    };
+  }
+
+  function ensureLanes(camTop) {
+    if (lanes.length === 0) {
+      while (nextLaneIndex * LANE_H < -camTop + BASE_H + GEN_BUFFER) {
+        lanes.push(createLane(nextLaneIndex));
+        nextLaneIndex++;
+      }
+    }
+    while (lanes[lanes.length - 1].laneTop > camTop - GEN_BUFFER) {
+      lanes.push(createLane(nextLaneIndex));
+      nextLaneIndex++;
+    }
+    const camBottom = camTop + BASE_H;
+    while (lanes.length > 0 && lanes[0].laneTop > camBottom + REMOVE_BUFFER) {
+      lanes.shift();
+    }
+  }
+
+  function resetLanes() {
+    lanes = [];
+    nextLaneIndex = 0;
+  }
+
+  // --- 犬(障害物)の数は進んだ距離に応じてノコギリ波状に増減する ---
+  // 0〜50mでMIN_DOGS→MAX_DOGSへ直線的に増加、50mを超えたところでMIN_DOGSまで一気に落ち着き、
+  // また次の50m(51〜100m)で同じように増加…を繰り返す(DOG_CYCLE_LENGTH_M周期)。
+  const MIN_DOGS = 10;
+  const MAX_DOGS = 50;
+  const DOG_CYCLE_LENGTH_M = 50;
+  const SAFE_DISTANCE_PX = 420; // スタート直後は犬を出現させない距離
+
+  let dogs = [];
+
+  function targetDogCount(distanceM) {
+    const posInCycle = distanceM % DOG_CYCLE_LENGTH_M;
+    const t = posInCycle / DOG_CYCLE_LENGTH_M;
+    return Math.round(MIN_DOGS + (MAX_DOGS - MIN_DOGS) * t);
+  }
+
+  // 犬1匹分の状態を(再)初期化する。カメラより先の未表示エリアに配置し直すことで使い回す
+  function resetDog(dog, camTop, distanceM) {
+    dog.dir = Math.random() < 0.5 ? 1 : -1;
+    const speedBase = 260 + Math.min(140, distanceM * 0.8);
+    dog.speed = speedBase + Math.random() * 120;
+    dog.worldX = Math.random() * BASE_W;
+    const forwardEdge = Math.min(camTop, -SAFE_DISTANCE_PX);
+    dog.baseWorldY = forwardEdge - Math.random() * (BASE_H + GEN_BUFFER);
+    dog.frameIndex = Math.floor(Math.random() * 4);
+    dog.frameTimer = Math.random() * 0.1;
+    dog.frameInterval = 0.09 + Math.random() * 0.03;
+    dog.bobPhase = Math.random() * Math.PI * 2;
+    dog.bobFreq = 5 + Math.random() * 3;
+    dog.bobAmp = 5 + Math.random() * 5;
+    dog.yOffset = 0;
+    dog.stopped = false;
+    dog.patternIndex = Math.floor(Math.random() * DOG_PATTERN_SRCS.length);
+  }
+
+  function isDogOnScreen(dog, camTop) {
+    const screenY = dog.baseWorldY + dog.yOffset - camTop;
+    return screenY > -dogFrameH && screenY < BASE_H + dogFrameH;
+  }
+
+  function ensureDogPopulation(distanceM, camTop) {
+    const target = targetDogCount(distanceM);
+    while (dogs.length < target) {
+      const dog = {};
+      resetDog(dog, camTop, distanceM);
+      dogs.push(dog);
+    }
+    // 匹数が減る場合、プレイヤーがまだ見ていない(画面外の)犬は即座に間引いてよい。
+    // 画面内で走っている犬だけは強制的に消さず、updateDogs() 側で自然に退場するのを待つ
+    let excess = dogs.length - target;
+    if (excess > 0) {
+      dogs = dogs.filter((dog) => {
+        if (excess > 0 && !isDogOnScreen(dog, camTop)) {
+          excess--;
+          return false;
+        }
+        return true;
+      });
+    }
+  }
+
+  function updateDogs(dt, distanceM) {
+    const camBottom = camera.top + BASE_H;
+    const half = dogFrameW / 2;
+    const target = targetDogCount(distanceM);
+    for (const dog of dogs) {
+      if (dog.stopped) continue; // ミスの原因になった犬はその場で静止させる
+
+      dog.worldX += dog.dir * dog.speed * dt;
+      const wantsWrap = (dog.dir === 1 && dog.worldX > BASE_W + half) || (dog.dir === -1 && dog.worldX < -half);
+      if (wantsWrap && dogs.length > target) {
+        // 匹数が超過している間は、画面端まで達しても反対側から再出現させず、
+        // そのまま画面の外(=見えなくなった状態)で退場させる
+        dog.gone = true;
+        continue;
+      }
+      let wrapped = false;
+      if (dog.dir === 1 && dog.worldX > BASE_W + half) { dog.worldX = -half; wrapped = true; }
+      if (dog.dir === -1 && dog.worldX < -half) { dog.worldX = BASE_W + half; wrapped = true; }
+      if (wrapped) {
+        // 画面の端から犬が現れた瞬間。実際に見えている(画面内の縦位置にいる)時だけ鳴らす
+        const screenY = dog.baseWorldY + dog.yOffset - camera.top;
+        if (screenY > -dogFrameH && screenY < BASE_H + dogFrameH) playDogSE();
+      }
+
+      dog.bobPhase += dt * dog.bobFreq;
+      dog.yOffset = Math.abs(Math.sin(dog.bobPhase) * dog.bobAmp);
+
+      dog.frameTimer += dt;
+      if (dog.frameTimer >= dog.frameInterval) {
+        dog.frameTimer = 0;
+        dog.frameIndex = (dog.frameIndex + 1) % 4;
+      }
+
+      // 画面のかなり後方まで流れたら、前方の未表示エリアに再配置して使い回す。
+      // ただしその時点で匹数が目標を超えていれば、再配置はせずそのまま退場させる
+      // (走っている最中の犬を強制的に消すのではなく、自然に画面外へ抜けたタイミングでだけ間引く)
+      if (dog.baseWorldY > camBottom + REMOVE_BUFFER) {
+        if (dogs.length > target) {
+          dog.gone = true;
+        } else {
+          resetDog(dog, camera.top, distanceM);
+        }
+      }
+    }
+    if (dogs.some((d) => d.gone)) dogs = dogs.filter((d) => !d.gone);
+  }
+
+  function resetDogs() {
+    dogs = [];
+  }
+
+  // --- コイン(収集アイテム) ---
+  // imgs/coins.png は回転アニメ10コマが横に並んだスプライトシート(白背景)。
+  // コマごとに絵の幅が違う(等間隔に並んでいない)ため、コマごとの開始x位置とその幅を配列で管理する。
+  // ここでは仮の値(等間隔)を入れてあるだけなので、実際の画像に合わせて数値を調整すること。
+  const COIN_FRAMES = [
+    { x: 0, w: 52 },
+    { x: 53, w: 54 },
+    { x: 110, w: 49 },
+    { x: 170, w: 37 },
+    { x: 232, w: 26 },
+    { x: 294, w: 11 },
+    { x: 341, w: 27 },
+    { x: 389, w: 40 },
+    { x: 440, w: 48 },
+    { x: 492, w: 52 },
+  ];
+  const COIN_FRAME_COUNT = COIN_FRAMES.length;
+  const COIN_SRC = 'imgs/coins.png';
+  const COIN_KEY_COLOR = { r: 255, g: 255, b: 255 };
+  const COIN_KEY_THRESHOLD = 25;
+  const COIN_KEY_FEATHER = 20;
+  const COIN_SCALE = 0.5; // コインの大きさは常に一定
+  const COIN_FRAME_INTERVAL = 0.05; // 回転アニメの1コマの秒数
+  const COIN_COUNT = 12; // 画面(手前〜先読みエリア)に常に存在させる数
+  const MAGNET_RADIUS = 72; // 自キャラ(直径36px)のおよそ2倍。この範囲に入ると吸い寄せられる
+  const COLLECT_DIST = 16; // ここまで吸い寄せられたら獲得
+
+  let coinSheet = null; // 読み込み完了後、透過済みのスプライトシート全体(1枚のcanvas)が入る
+  let coinFrameH = 0; // 縦は全コマ共通の高さを想定
+
+  loadImage(COIN_SRC)
+    .then((img) => {
+      coinFrameH = img.naturalHeight;
+      coinSheet = chromaKeyToCanvas(img, COIN_KEY_COLOR, COIN_KEY_THRESHOLD, COIN_KEY_FEATHER);
+    })
+    .catch((err) => console.error('コイン画像の読み込みに失敗しました', err));
+
+  let coins = [];
+  let currentCoins = 0;
+
+  // コイン1枚分の状態を(再)初期化する。犬と同様、カメラより先の未表示エリアに配置し直して使い回す
+  function resetCoin(coin, camTop) {
+    coin.worldX = Math.random() * BASE_W;
+    coin.worldY = Math.min(camTop, 0) - Math.random() * (BASE_H + GEN_BUFFER);
+    coin.frameIndex = Math.floor(Math.random() * COIN_FRAME_COUNT);
+    coin.frameTimer = Math.random() * 0.1;
+    coin.magnetized = false;
+    coin.pickupDelay = 0;
+  }
+
+  function ensureCoinPopulation(camTop) {
+    while (coins.length < COIN_COUNT) {
+      const coin = {};
+      resetCoin(coin, camTop);
+      coins.push(coin);
+    }
+  }
+
+  // 回転アニメだけは、ミス中(frozen)でも止めずに毎フレーム進める
+  function updateCoinAnimation(dt) {
+    for (const coin of coins) {
+      coin.frameTimer += dt;
+      if (coin.frameTimer >= COIN_FRAME_INTERVAL) {
+        coin.frameTimer = 0;
+        coin.frameIndex = (coin.frameIndex + 1) % COIN_FRAME_COUNT;
+      }
+      if (coin.scatter) updateCoinScatter(coin, dt); // 犬にぶつかってfrozen中でもばらまき演出は止めない
+    }
+  }
+
+  function updateCoins(dt) {
+    const camBottom = camera.top + BASE_H;
+    for (const coin of coins) {
+      if (coin.pickupDelay > 0) {
+        coin.pickupDelay -= dt;
+        continue; // ばらまかれた直後は磁石も効かず、拾えない
+      }
+
+      const dx = player.worldX - coin.worldX;
+      const dy = player.worldY - coin.worldY;
+      const dist = Math.hypot(dx, dy);
+
+      if (!coin.magnetized && dist < MAGNET_RADIUS) coin.magnetized = true;
+
+      if (coin.magnetized) {
+        if (dist < COLLECT_DIST) {
+          currentCoins++;
+          playCoinSE();
+          if (coin.bonus) {
+            // 風船からのばらまきコインは使い回さず消える(通常のプール数には含めない)
+            coin.gone = true;
+          } else {
+            resetCoin(coin, camera.top);
+          }
+          continue;
+        }
+        // 近づくほど加速する、磁石に吸い込まれるような動き
+        const pullSpeed = 260 + (1 - Math.min(1, dist / MAGNET_RADIUS)) * 380;
+        coin.worldX += (dx / dist) * pullSpeed * dt;
+        coin.worldY += (dy / dist) * pullSpeed * dt;
+      } else if (coin.worldY > camBottom + REMOVE_BUFFER) {
+        if (coin.bonus) {
+          // 拾われないまま画面後方へ流れたボーナスコインは、通常プールに紛れ込ませず消す
+          coin.gone = true;
+        } else {
+          resetCoin(coin, camera.top);
+        }
+      }
+    }
+    if (coins.some((c) => c.gone)) coins = coins.filter((c) => !c.gone);
+  }
+
+  // ライフを失って再スタートする時に呼ぶ。配置だけリセットし、枚数(currentCoins)は維持する(コインは引き継ぐ)
+  function resetCoinPositions() {
+    coins = [];
+  }
+
+  // --- 風船(回復 or コインばらまき) ---
+  // imgs/balloon-red.png は元から透過済みのPNGなのでクロマキー不要、そのままdrawImageできる
+  const BALLOON_SRC = 'imgs/balloon-red.png';
+  const BALLOON_SCALE = 0.15; // 表示の大きさ
+  const BALLOON_R = 26; // 当たり判定の半径
+  const BALLOON_SPAWN_DISTANCE_M = 5; // これだけ進むごとに1匹出現(同時に存在するのは1つまで)
+  const BALLOON_APPROACH_SPEED = 18; // 自機が止まっていても少しずつ近づいてくる速度(px/s、ゆっくりめ)
+  const BALLOON_SWAY_AMP = 55; // 蛇行の左右の振れ幅(px)
+  const BALLOON_SWAY_SPEED = 1.6; // 蛇行の速さ(rad/s)
+  const BALLOON_HEAL_RATIO = 0.25; // ライフが満タンでない時の回復量(最大HPに対する割合)
+  const BALLOON_SCATTER_COINS = 50; // ライフが満タンの時にばらまくコインの枚数
+  const BALLOON_SCATTER_RADIUS = 200; // ばらまく範囲(自キャラ中心、円形に散らばる半径のおおよその最大値、px)
+  const BALLOON_SCATTER_PICKUP_DELAY = 1; // ばらまかれてから拾えるようになるまでの秒数
+  // ばらまき演出(ハートと同じような放物線 + 小さく2回バウンド)のパラメータ
+  const SCATTER_FLIGHT_TIME = 0.6; // 中心から目的地まで飛んでいく時間(秒)
+  const SCATTER_HOP_SPEED = 300; // 最初のホップの高さを決める初速
+  const SCATTER_GRAVITY = 1400;
+  const SCATTER_BOUNCE_COUNT = 2; // 着地後に小さくバウンドする回数
+  const SCATTER_BOUNCE_DAMPING = 0.45; // バウンドのたびに勢いが弱まる割合
+
+  let balloonImg = null;
+  let balloon = null; // { baseX, worldY, swayPhase } / 存在しない時はnull
+  let nextBalloonDistanceM = BALLOON_SPAWN_DISTANCE_M;
+
+  loadImage(BALLOON_SRC)
+    .then((img) => { balloonImg = img; })
+    .catch((err) => console.error('風船画像の読み込みに失敗しました', err));
+
+  function resetBalloon() {
+    balloon = null;
+    nextBalloonDistanceM = BALLOON_SPAWN_DISTANCE_M;
+  }
+
+  // 犬やコインと同じくワールド座標に置くので、自機が奥へ進む(camera.topが減る)とその分だけ
+  // 画面上では相対的に下(自機側)へ流れてくる。止まっていても少しだけ近づいてくるよう定速度も足しておく
+  function balloonWorldPos() {
+    return {
+      worldX: balloon.baseX + Math.sin(balloon.swayPhase) * BALLOON_SWAY_AMP,
+      worldY: balloon.worldY,
+    };
+  }
+
+  function ensureBalloon(distanceM) {
+    if (balloon || !balloonImg) return;
+    if (distanceM >= nextBalloonDistanceM) {
+      balloon = {
+        baseX: 80 + Math.random() * (BASE_W - 160),
+        worldY: camera.top - 40, // 画面の少し上(まだ見えない少し先)から登場する
+        swayPhase: Math.random() * Math.PI * 2,
+      };
+      nextBalloonDistanceM += BALLOON_SPAWN_DISTANCE_M;
+    }
+  }
+
+  // 風船を回収した瞬間の処理。ライフが満タンでなければ回復、満タンならコインをばらまく
+  function collectBalloon() {
+    const { worldX: popupX, worldY: popupY } = balloonWorldPos();
+    if (hp < MAX_HP) {
+      hp = Math.min(MAX_HP, hp + MAX_HP * BALLOON_HEAL_RATIO);
+      spawnPopup(popupX, popupY, 'LIFE UP!', '#7cff6b');
+      return;
+    }
+    spawnPopup(popupX, popupY, 'BONUS!', '#ffd54f');
+    const originX = player.worldX;
+    const originY = player.worldY;
+    for (let i = 0; i < BALLOON_SCATTER_COINS; i++) {
+      // 均等に円周上へ散らしつつ、少しランダムにずらして自然な散らばりにする
+      const angle = (i / BALLOON_SCATTER_COINS) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+      const radius = BALLOON_SCATTER_RADIUS * (0.6 + Math.random() * 0.4);
+      const coin = {};
+      resetCoin(coin, camera.top);
+      coin.worldX = originX;
+      coin.worldY = originY;
+      coin.bonus = true; // 通常のプールに戻さず、回収したら消える一回限りのコイン
+      coin.pickupDelay = BALLOON_SCATTER_PICKUP_DELAY; // ばらまかれた直後はしばらく拾えない
+      coin.scatter = {
+        originX,
+        originY,
+        targetX: originX + Math.cos(angle) * radius,
+        targetY: originY + Math.sin(angle) * radius,
+        t: 0,
+        hopVz: SCATTER_HOP_SPEED,
+        hopZ: 0,
+        bounces: 0,
+      };
+      coins.push(coin);
+    }
+  }
+
+  // ハートの噴水と同じ考え方(重力で放物線を描く)を、中心から目的地まで飛んでいく2D散らばりに応用したもの。
+  // 実際の当たり判定・磁石判定に使うworldX/worldYは目的地への直線移動、見た目の高さ(hopZ)だけ別に重力で弾ませて
+  // 描画時にscreenYから引く(drawWorld側)。着地を数回繰り返すごとに勢いが弱まり、最後は完全に静止する
+  function updateCoinScatter(coin, dt) {
+    const s = coin.scatter;
+    s.t = Math.min(1, s.t + dt / SCATTER_FLIGHT_TIME);
+    coin.worldX = s.originX + (s.targetX - s.originX) * s.t;
+    coin.worldY = s.originY + (s.targetY - s.originY) * s.t;
+
+    s.hopVz -= SCATTER_GRAVITY * dt;
+    s.hopZ += s.hopVz * dt;
+    if (s.hopZ <= 0) {
+      s.hopZ = 0;
+      s.bounces++;
+      if (s.bounces > SCATTER_BOUNCE_COUNT) {
+        coin.scatter = null; // 演出終了。以降は普通のコインとして扱う
+      } else {
+        s.hopVz = -s.hopVz * SCATTER_BOUNCE_DAMPING; // 着地の勢いを反転・減衰させて弾ませる
+      }
+    }
+  }
+
+  function updateBalloon(dt) {
+    if (!balloon) return;
+    balloon.worldY += BALLOON_APPROACH_SPEED * dt; // 自機が止まっていてもゆっくり近づく
+    balloon.swayPhase += dt * BALLOON_SWAY_SPEED;
+
+    const screenY = balloon.worldY - camera.top;
+    if (screenY > BASE_H + 60) {
+      balloon = null; // 誰にも回収されず画面下まで流れていったら消える
+      return;
+    }
+
+    const { worldX, worldY } = balloonWorldPos();
+    const dist = Math.hypot(player.worldX - worldX, player.worldY - worldY);
+    if (dist < BALLOON_R + player.r) {
+      collectBalloon();
+      balloon = null;
+    }
+  }
+
+  function drawBalloon() {
+    if (!balloon || !balloonImg) return;
+    const { worldX, worldY } = balloonWorldPos();
+    const screenY = worldY - camera.top;
+    const w = balloonImg.naturalWidth * BALLOON_SCALE;
+    const h = balloonImg.naturalHeight * BALLOON_SCALE;
+
+    // 紐の先端(画像下端)あたりを接地点とみなして地面に影を落とす
+    drawShadow(wctx, worldX, screenY + h / 2, w);
+
+    wctx.save();
+    wctx.translate(worldX, screenY);
+    wctx.rotate(Math.sin(balloon.swayPhase) * 0.15);
+    wctx.drawImage(balloonImg, -w / 2, -h / 2, w, h);
+    wctx.restore();
+  }
+
+  // 風船を取った場所に「LIFE UP!」/「BONUS!」を小さく表示する(スーパーマリオの1UPを少し大きくしたような演出)
+  const POPUP_LIFE = 1.1; // 秒
+  const POPUP_RISE_SPEED = 40; // px/s、ふわっと上に浮く速さ
+
+  let popups = [];
+
+  function spawnPopup(x, y, text, color) {
+    popups.push({ x, y, text, color, timer: 0 });
+  }
+
+  function updatePopups(dt) {
+    for (const p of popups) {
+      p.timer += dt;
+      p.y -= POPUP_RISE_SPEED * dt;
+    }
+    popups = popups.filter((p) => p.timer < POPUP_LIFE);
+  }
+
+  function drawPopup(ctx, p) {
+    const t = p.timer / POPUP_LIFE;
+    const alpha = t < 0.6 ? 1 : Math.max(0, 1 - (t - 0.6) / 0.4);
+    const screenY = p.y - camera.top;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.strokeText(p.text, p.x, screenY);
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.text, p.x, screenY);
+    ctx.restore();
+  }
+
+  // --- ミス演出(ハートの噴水) ---
+  let missFX = null; // { dog, groundY, contactX, heartTimer }
+  let hearts = [];
+
+  function spawnHeart(x, groundY) {
+    hearts.push({
+      x: x + (Math.random() - 0.5) * 24,
+      y: groundY - 16,
+      vx: (Math.random() - 0.5) * 105,
+      vy: -(220 + Math.random() * 140),
+      size: 9 + Math.random() * 7,
+      alpha: 1,
+      settled: false,
+      settleTimer: 0,
+      groundY,
+    });
+  }
+
+  function updateMissFX(dt) {
+    if (missFX) {
+      missFX.heartTimer += dt;
+      if (missFX.heartTimer > 0.055) {
+        missFX.heartTimer = 0;
+        spawnHeart(missFX.contactX, missFX.groundY);
+      }
+    }
+
+    const GRAVITY = 700;
+    for (const h of hearts) {
+      if (h.settled) {
+        h.settleTimer += dt;
+        h.alpha = Math.max(0, 1 - h.settleTimer / 0.4);
+        continue;
+      }
+      h.vy += GRAVITY * dt;
+      h.x += h.vx * dt;
+      h.y += h.vy * dt;
+      if (h.y >= h.groundY) {
+        h.y = h.groundY;
+        h.settled = true;
+      }
+    }
+    hearts = hearts.filter((h) => h.alpha > 0.01);
+  }
+
+  function drawHeart(ctx, x, y, size, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ff6fa5';
+    ctx.beginPath();
+    const top = size * 0.3;
+    ctx.moveTo(x, y + top);
+    ctx.bezierCurveTo(x, y, x - size / 2, y, x - size / 2, y + top);
+    ctx.bezierCurveTo(x - size / 2, y + (size + top) / 2, x, y + (size + top) / 2, x, y + size);
+    ctx.bezierCurveTo(x, y + (size + top) / 2, x + size / 2, y + (size + top) / 2, x + size / 2, y + top);
+    ctx.bezierCurveTo(x + size / 2, y, x, y, x, y + top);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // --- プレイヤー & カメラ(前方へのみ進むスクロール) ---
+  const player = { worldX: 0, worldY: 0, r: 18 };
+  const PLAYER_HIT_R = player.r * 0.8; // 見た目より少し小さめの当たり判定にする
+  const camera = { top: 0 };
+  let currentScore = 0;
+  let bestScore = 0;
+  let frozen = false; // ヒット硬直中・ゲームオーバー画面表示中はtrue(移動と当たり判定を止める)
+
+  // --- ライフ・残機 ---
+  const MAX_HP = 100;
+  const HP_DAMAGE_PER_HIT = 25; // 犬にぶつかるたびに最大HPの25%減る
+  const START_LIVES = 0;
+  const HIT_RECOVER_MS = 3000; // ヒット後、何もしなくても自動で復帰するまでの時間
+  const INVINCIBLE_MS = 2000; // 復帰後の無敵時間
+
+  let hp = MAX_HP;
+  let lives = START_LIVES;
+  let invincibleUntil = 0; // performance.now()がこの値未満なら無敵
+  let gameOver = false;
+  let hitRecoverTimer = null;
+
+  // ヒット直後・ゲームオーバー直後は一定時間・キー押しっぱなしでは再開(復帰/リスタート)しない
+  const RESUME_GRACE_MS = 500;
+  let missStartTime = 0;
+  let staleKeysAtMiss = new Set();
+
+  // タップ/WASD押し直し/ジョイスティック操作で呼ばれる。状況に応じて「ヒットから復帰」か「ゲームオーバーからリスタート」を行う
+  function tryResume() {
+    if (performance.now() - missStartTime < RESUME_GRACE_MS) return;
+    if (gameOver) {
+      resetGame();
+      return;
+    }
+    recoverFromHit();
+  }
+
+  // 1ライフ分の状態をスタートに戻す(距離・カメラ・敵配置などをリセット。コインの枚数と残機・ベストは維持する)
+  function resetLife() {
+    player.worldX = BASE_W / 2;
+    player.worldY = 0;
+    camera.top = -BASE_H * 0.8;
+    resetLanes();
+    resetDogs();
+    resetCoinPositions();
+    resetBalloon();
+    missFX = null;
+    hearts = [];
+    popups = [];
+    currentScore = 0;
+    hp = MAX_HP;
+    invincibleUntil = 0;
+    frozen = false;
+    playerEl.classList.remove('hit', 'licked', 'invincible');
+    missEl.classList.remove('show');
+  }
+
+  // ゲーム全体を最初から始める(残機・コイン数もリセット)。初回起動時とゲームオーバーからのリスタート時に呼ぶ
+  function resetGame() {
+    lives = START_LIVES;
+    currentCoins = 0;
+    gameOver = false;
+    gameOverEl.classList.remove('show');
+    resetLife();
+  }
+  resetGame();
+
+  // 犬にぶつかった瞬間。即ミスにはせず、ライフを削って一定時間硬直させる
+  function triggerMiss(dog) {
+    if (frozen || gameOver) return;
+    frozen = true;
+    missStartTime = performance.now();
+    staleKeysAtMiss = new Set(Object.keys(keys).filter((k) => keys[k]));
+    hp = Math.max(0, hp - HP_DAMAGE_PER_HIT);
+    bestScore = Math.max(bestScore, currentScore);
+    dog.stopped = true;
+    missFX = {
+      dog,
+      groundY: dog.baseWorldY + dog.yOffset,
+      contactX: (player.worldX + dog.worldX) / 2,
+      heartTimer: 0,
+    };
+    playerEl.classList.add('hit', 'licked');
+    missEl.classList.add('show');
+    missCoinScoreEl.textContent = currentCoins;
+
+    clearTimeout(hitRecoverTimer);
+    hitRecoverTimer = setTimeout(recoverFromHit, HIT_RECOVER_MS);
+  }
+
+  // ヒットの硬直から復帰する(3秒経過 or 入力、どちらか早い方)。HPが残っていればそのまま続行、0ならライフを失う
+  function recoverFromHit() {
+    if (!frozen || gameOver) return;
+    clearTimeout(hitRecoverTimer);
+    hitRecoverTimer = null;
+    if (missFX) missFX.dog.stopped = false; // ぶつかった犬も復帰時に再び走り出させる
+    missFX = null;
+    playerEl.classList.remove('hit', 'licked');
+    missEl.classList.remove('show');
+
+    if (hp <= 0) {
+      lives -= 1;
+      if (lives <= 0) {
+        triggerGameOver();
+      } else {
+        resetLife(); // 距離は0に戻る。コインは引き継ぐ
+      }
+    } else {
+      frozen = false;
+      invincibleUntil = performance.now() + INVINCIBLE_MS;
+    }
+  }
+
+  function triggerGameOver() {
+    gameOver = true; // frozenはtrueのまま維持し、移動・当たり判定を止め続ける
+    missStartTime = performance.now();
+    staleKeysAtMiss = new Set(Object.keys(keys).filter((k) => keys[k]));
+    goDistanceEl.textContent = bestScore;
+    goCoinsEl.textContent = currentCoins;
+    gameOverEl.classList.add('show');
+  }
+
+  // ヒット硬直中・ゲームオーバー中、タップ(クリック)で復帰/リスタートする
+  viewportEl.addEventListener('pointerdown', () => {
+    startBGM();
+    tryResume();
+  });
+
+  function circleRectHit(cx, cy, r, rx, ry, rw, rh) {
+    const closestX = Math.max(rx, Math.min(cx, rx + rw));
+    const closestY = Math.max(ry, Math.min(cy, ry + rh));
+    const dx = cx - closestX;
+    const dy = cy - closestY;
+    return (dx * dx + dy * dy) < r * r;
+  }
+
+  // 当たり判定は画像全体ではなく、縦は上から50%〜80%の範囲(体の中心〜脚のあたり)だけにする
+  const HIT_TOP_RATIO = 0.6;
+  const HIT_BOTTOM_RATIO = 0.7;
+
+  // 画面最下部は安全地帯にする(自機がここにいる間は犬に当たらない)
+  const BOTTOM_SAFE_ZONE_PX = 60;
+
+  function checkCollision() {
+    if (!dogFrameSets) return;
+    if (performance.now() < invincibleUntil) return; // 無敵中は当たらない
+    if (player.worldY > camera.top + BASE_H - BOTTOM_SAFE_ZONE_PX) return; // 画面最下部の安全地帯
+    const hitW = dogFrameW * 0.55;
+    const hitH = dogFrameH * (HIT_BOTTOM_RATIO - HIT_TOP_RATIO);
+    for (const dog of dogs) {
+      const dogY = dog.baseWorldY + dog.yOffset;
+      const hitTop = dogY + dogFrameH * (HIT_TOP_RATIO - 0.5);
+      const hitCenterY = hitTop + hitH / 2;
+      if (Math.abs(hitCenterY - player.worldY) > hitH / 2 + PLAYER_HIT_R) continue;
+      const rx = dog.worldX - hitW / 2;
+      if (circleRectHit(player.worldX, player.worldY, PLAYER_HIT_R, rx, hitTop, hitW, hitH)) {
+        triggerMiss(dog);
+        return;
+      }
+    }
+  }
+
+  // --- キャンバス(レーンの背景と犬を描画) ---
+  const worldCanvas = document.getElementById('world');
+  const wctx = worldCanvas.getContext('2d');
+  const fxCanvas = document.getElementById('fx-layer');
+  const fctx = fxCanvas.getContext('2d');
+
+  function resizeCanvas(canvas, ctx) {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = BASE_W * dpr;
+    canvas.height = BASE_H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resizeCanvas(worldCanvas, wctx);
+  resizeCanvas(fxCanvas, fctx);
+
+  // 犬・コインの足元の地面につく影(横長の楕円)。犬やコインはジャンプ/バウンドで上下に動くが、影は地面の高さに固定する
+  const SHADOW_Y_RATIO = 0.88; // 犬の画像の縦方向のどの位置を接地点とみなすか(50%が中心)
+
+  function drawShadow(ctx, x, y, w) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.beginPath();
+    ctx.ellipse(x, y, w * 0.32, w * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawWorld() {
+    const w = BASE_W;
+    const h = BASE_H;
+    wctx.fillStyle = '#7ec850';
+    wctx.fillRect(0, 0, w, h);
+
+    for (const lane of lanes) {
+      const screenTop = lane.laneTop - camera.top;
+      const screenBottom = lane.laneBottom - camera.top;
+      if (screenBottom < 0 || screenTop > h) continue;
+      wctx.fillStyle = lane.shade ? '#7ec850' : '#74bd47';
+      wctx.fillRect(0, screenTop, w, screenBottom - screenTop);
+    }
+
+    if (coinSheet) {
+      const coinDestH = coinFrameH * COIN_SCALE;
+      // 奥(worldYが小さい)から手前の順に描く。ばらまき中は疑似的な高さ(hopZ)がある方を手前寄りとして扱う
+      const sortedCoins = coins.slice().sort((a, b) => {
+        const az = a.scatter ? a.scatter.hopZ : 0;
+        const bz = b.scatter ? b.scatter.hopZ : 0;
+        return (a.worldY + az) - (b.worldY + bz);
+      });
+      for (const coin of sortedCoins) {
+        const hopZ = coin.scatter ? coin.scatter.hopZ : 0; // ばらまき演出中はバウンドの高さ分だけ浮かせて描く
+        const groundScreenY = coin.worldY - camera.top;
+        const screenY = groundScreenY - hopZ;
+        if (screenY < -coinDestH || groundScreenY > h + coinDestH) continue;
+
+        drawShadow(wctx, coin.worldX, groundScreenY + coinDestH * 0.35, coinDestH * 1.6);
+
+        const f = COIN_FRAMES[coin.frameIndex];
+        const destW = f.w * COIN_SCALE;
+        wctx.drawImage(
+          coinSheet,
+          f.x, 0, f.w, coinFrameH,
+          coin.worldX - destW / 2, screenY - coinDestH / 2, destW, coinDestH
+        );
+      }
+    }
+
+    if (dogFrameSets) {
+      // 奥(baseWorldYが小さい)の犬から先に描き、手前側の犬が最後(前面)に重なるようにする
+      const sortedDogs = dogs.slice().sort((a, b) => a.baseWorldY - b.baseWorldY);
+      for (const dog of sortedDogs) {
+        const screenY = dog.baseWorldY + dog.yOffset - camera.top;
+        if (screenY < -dogFrameH || screenY > h + dogFrameH) continue;
+
+        const shadowScreenY = dog.baseWorldY + dogFrameH * (SHADOW_Y_RATIO - 0.5) - camera.top;
+        drawShadow(wctx, dog.worldX, shadowScreenY, dogFrameW);
+
+        const frame = dogFrameSets[dog.patternIndex][dog.frameIndex];
+        wctx.save();
+        wctx.translate(dog.worldX, screenY);
+        if (dog.dir === 1) wctx.scale(-1, 1);
+        wctx.drawImage(frame, -dogFrameW / 2, -dogFrameH / 2, dogFrameW, dogFrameH);
+        wctx.restore();
+      }
+    }
+
+    drawBalloon();
+  }
+
+  function drawFx() {
+    fctx.clearRect(0, 0, BASE_W, BASE_H);
+    for (const h of hearts) drawHeart(fctx, h.x, h.y - camera.top, h.size, h.alpha);
+    for (const p of popups) drawPopup(fctx, p);
+  }
+
+  // --- 昼/夕方の色フィルター(50mごとに交互、境界付近だけなめらかに切り替える) ---
+  const DAYNIGHT_CYCLE_M = 50; // これだけ進むごとに昼⇔夕方が切り替わる
+  const DAYNIGHT_BLEND_M = 6; // 切り替わり境界のグラデーション幅(m)
+  const DUSK_MAX_OPACITY = 0.2; // 夕方フィルターの最大の濃さ(少しだけ、を意識した控えめな値)
+
+  // 0(昼)〜1(夕方)を返す。DAYNIGHT_CYCLE_Mごとに昼/夕方が交互になり、境界の前後だけ滑らかに移行する
+  function computeDuskAmount(distanceM) {
+    const superCycle = DAYNIGHT_CYCLE_M * 2;
+    const pos = ((distanceM % superCycle) + superCycle) % superCycle; // 0〜100
+    if (pos < DAYNIGHT_CYCLE_M) {
+      // 昼の区間。終盤だけ夕方へブレンドしていく
+      const intoDay = DAYNIGHT_CYCLE_M - pos;
+      if (intoDay < DAYNIGHT_BLEND_M) return 1 - intoDay / DAYNIGHT_BLEND_M;
+      return 0;
+    }
+    // 夕方の区間。終盤だけ昼へブレンドしていく
+    const intoDusk = pos - DAYNIGHT_CYCLE_M;
+    const remaining = DAYNIGHT_CYCLE_M - intoDusk;
+    if (remaining < DAYNIGHT_BLEND_M) return remaining / DAYNIGHT_BLEND_M;
+    return 1;
+  }
+
+  // --- タブが非アクティブになったらBGMを止め、ゲーム全体も一時停止する ---
+  let gamePaused = false;
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      gamePaused = true;
+      bgmAudio.pause();
+    } else {
+      gamePaused = false;
+      last = performance.now(); // dtが跳ね上がらないよう基準を今にリセット
+      if (bgmStarted) bgmAudio.play().catch(() => {});
+    }
+  });
+
   // --- ゲームループ ---
   let last = performance.now();
   function loop(now) {
-    const dt = (now - last) / 1000;
+    if (gamePaused) {
+      requestAnimationFrame(loop);
+      return;
+    }
+
+    let dt = (now - last) / 1000;
+    if (dt > 0.05) dt = 0.05; // タブ切り替え等での大ジャンプを防ぐ
     last = now;
 
-    const kv = keyboardVector();
-    // キーボード入力があればそちらを優先、なければジョイスティックの入力を使う
-    const v = (kv.x !== 0 || kv.y !== 0) ? kv : joyVector;
+    ensureLanes(camera.top);
 
-    x += v.x * speed * dt;
-    y += v.y * speed * dt;
+    const distanceM = Math.max(0, -player.worldY / LANE_H);
+    daynightOverlayEl.style.opacity = computeDuskAmount(distanceM) * DUSK_MAX_OPACITY;
+    ensureDogPopulation(distanceM, camera.top);
+    updateDogs(dt, distanceM);
+    dogDebugActualEl.textContent = dogs.filter((d) => isDogOnScreen(d, camera.top)).length;
+    dogDebugTargetEl.textContent = targetDogCount(distanceM);
+    updateMissFX(dt);
+    updatePopups(dt);
+    ensureCoinPopulation(camera.top);
+    updateCoinAnimation(dt);
 
-    const r = 20;
-    x = Math.max(r, Math.min(window.innerWidth - r, x));
-    y = Math.max(r, Math.min(window.innerHeight - r, y));
+    if (!frozen) {
+      const kv = keyboardVector();
+      // キーボード入力があればそちらを優先、なければジョイスティックの入力を使う
+      const v = (kv.x !== 0 || kv.y !== 0) ? kv : joyVector;
 
-    player.style.left = x + 'px';
-    player.style.top = y + 'px';
+      let nx = player.worldX + v.x * speed * dt;
+      let ny = player.worldY + v.y * speed * dt;
+
+      nx = Math.max(player.r, Math.min(BASE_W - player.r, nx));
+      ny = Math.max(camera.top + player.r, Math.min(camera.top + BASE_H - player.r, ny));
+
+      player.worldX = nx;
+      player.worldY = ny;
+
+      camera.top = Math.min(camera.top, player.worldY - BASE_H * 0.8);
+
+      updateCoins(dt);
+      checkCollision();
+      ensureBalloon(distanceM);
+      updateBalloon(dt);
+    }
+
+    currentScore = Math.max(0, Math.round(-player.worldY / LANE_H));
+    scoreEl.textContent = currentScore;
+    bestEl.textContent = Math.max(bestScore, currentScore);
+    coinScoreEl.textContent = currentCoins;
+
+    lifeBarFillEl.style.width = (hp / MAX_HP * 100) + '%';
+    lifeBarFillEl.style.background = hp > MAX_HP * 0.5 ? '#4caf50' : (hp > MAX_HP * 0.25 ? '#ffca28' : '#ff5252');
+    // livesCountEl.textContent = lives;
+
+    playerEl.classList.toggle('invincible', performance.now() < invincibleUntil);
+
+    playerEl.style.left = player.worldX + 'px';
+    playerEl.style.top = (player.worldY - camera.top) + 'px';
+
+    drawWorld();
+    drawFx();
 
     requestAnimationFrame(loop);
   }
