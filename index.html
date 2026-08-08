@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Move Sample</title>
+<script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.1/dist/nipplejs.min.js"></script>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #1e1e1e;
+    touch-action: none;
+  }
+  #game {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+  #player {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    margin-left: -20px;
+    margin-top: -20px;
+    border-radius: 50%;
+    background: #4caf50;
+  }
+  /* スマホでジョイスティックを認識する範囲(左下エリア)。デバッグ用に薄く表示 */
+  #joystick-zone {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 50%;
+    height: 50%;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  #hint {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: #ccc;
+    font-family: sans-serif;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div id="game">
+  <div id="player"></div>
+  <div id="joystick-zone"></div>
+  <div id="hint">PC: WASD で移動 / スマホ: 画面左下をドラッグ</div>
+</div>
+
+<script>
+  const player = document.getElementById('player');
+  const zone = document.getElementById('joystick-zone');
+
+  let x = window.innerWidth / 2;
+  let y = window.innerHeight / 2;
+  const speed = 300; // px/sec
+
+  // --- キーボード(WASD)入力 ---
+  const keys = { w: false, a: false, s: false, d: false };
+
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k in keys) keys[k] = true;
+  });
+  window.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if (k in keys) keys[k] = false;
+  });
+
+  function keyboardVector() {
+    let vx = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    let vy = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+    const len = Math.hypot(vx, vy);
+    if (len > 0) {
+      vx /= len;
+      vy /= len;
+    }
+    return { x: vx, y: vy };
+  }
+
+  // --- スマホ(仮想ジョイスティック)入力 ---
+  const manager = nipplejs.create({
+    zone: zone,
+    mode: 'dynamic', // 触れた場所を中心にする
+    color: 'white',
+    size: 100,
+  });
+
+  let joyVector = { x: 0, y: 0 };
+
+  manager.on('move', (evt, data) => {
+    if (data.vector) {
+      // nipplejsのyは上が+なので、画面座標(下が+)に合わせて反転
+      joyVector = { x: data.vector.x, y: -data.vector.y };
+    }
+  });
+  manager.on('end', () => {
+    joyVector = { x: 0, y: 0 };
+  });
+
+  // --- ゲームループ ---
+  let last = performance.now();
+  function loop(now) {
+    const dt = (now - last) / 1000;
+    last = now;
+
+    const kv = keyboardVector();
+    // キーボード入力があればそちらを優先、なければジョイスティックの入力を使う
+    const v = (kv.x !== 0 || kv.y !== 0) ? kv : joyVector;
+
+    x += v.x * speed * dt;
+    y += v.y * speed * dt;
+
+    const r = 20;
+    x = Math.max(r, Math.min(window.innerWidth - r, x));
+    y = Math.max(r, Math.min(window.innerHeight - r, y));
+
+    player.style.left = x + 'px';
+    player.style.top = y + 'px';
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+</script>
+</body>
+</html>
