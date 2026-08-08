@@ -82,6 +82,7 @@
   - `hp < MAX_HP`(満タンでない)なら `hp += MAX_HP * BALLOON_HEAL_RATIO`(`BALLOON_HEAL_RATIO=0.25`。最大HPの25%回復、上限は`MAX_HP`でクランプ)
   - `hp` が既に満タンなら、`BALLOON_SCATTER_COINS=25`枚のコイン(`coin.bonus=true`)をプレイヤー中心に円形に(半径`BALLOON_SCATTER_RADIUS=100px`のおよそ60〜100%の範囲)ばらまく。ばらまかれた瞬間は即座に回収されてしまうと味気ないので、`coin.pickupDelay = BALLOON_SCATTER_PICKUP_DELAY`(=1秒)を設定しておき、`updateCoins()`側で`pickupDelay > 0`の間は磁石判定自体をスキップする。1秒経過後に通常のコインと同様、磁石範囲内なら自動で吸い寄せられて回収される。通常コイン(`resetCoin()`)は常に`pickupDelay = 0`
   - **ばらまき演出**: 各コインは自キャラの位置から目的地(上記の円周上の点)まで`SCATTER_FLIGHT_TIME`(0.6秒)かけて直線移動しつつ、`coin.scatter`オブジェクトが持つ`hopZ`(見た目だけの高さ)がハートの噴水と同じ重力式(`SCATTER_GRAVITY`で加速、地面`hopZ<=0`で反射)でポンポンと`SCATTER_BOUNCE_COUNT`回(2回)小さくバウンドする(`SCATTER_BOUNCE_DAMPING`で着地のたびに勢いが弱まる)。実際のワールド座標(磁石判定・当たり判定に使う`worldX`/`worldY`)は目的地への直線移動だけで決め、`hopZ`は`drawWorld()`の描画時に`screenY`から引いているだけの見た目専用の値(`updateCoinScatter()`)。バウンドが終わると`coin.scatter = null`になり、以降は普通の静止コインとして扱われる
+  - **飛び始めのランダムな遅延(2026-08-08 追加)**: 着地点はランダムでも、50枚全てが寸分違わず同時に飛び出し同時にバウンドしていたため機械的に見える、という指摘があった。`coin.scatter.delay`(=`Math.random() * SCATTER_STAGGER_SEC`、最大0.15秒)を追加し、`updateCoinScatter()`の先頭で`delay > 0`の間はまだ動かさず(`delay -= dt`するだけで`return`)自機の位置に足止めしておく方式にした。`delay`はコインごとにバラバラなので、飛行(`t`)・バウンドのタイミングも自然にずれる。足止め中は見た目上自機と重なって隠れているため、遅延そのものが視覚的な違和感になることはない。Playwrightで、50枚それぞれの`delay`が0〜0.15秒の範囲でバラけていること(ユニーク値50個)、0.3秒後の各コインの飛行進捗`t`もバラけていることを確認済み
   - `updateCoinScatter()`の呼び出しは`updateCoinAnimation()`(回転アニメ担当、`frozen`中でも毎フレーム呼ばれる)側に移してある(2026-08-08)ので、**犬にぶつかってヒット硬直(`frozen`)中でもばらまきの放物線・バウンドは止まらない**。他の犬が動き続けるのと同じ扱い。止まるのは磁石での吸い寄せ・獲得判定(`updateCoins()`側、`!frozen`の時だけ呼ばれる)だけ
 - `ensureBalloon`/`updateBalloon`は犬やコインと同様、`frozen`(ヒット硬直中・ゲームオーバー中)の間は呼ばれないので、その間は出現も落下も止まる
 - **取得時のポップアップ表示**(2026-08-08 追加): 風船を取った場所(`balloonWorldPos()`で捕捉した座標)に、スーパーマリオの「1UP」を少し大きくしたような浮き上がるテキストを表示する。回復時は`LIFE UP!`(黄緑`#7cff6b`)、ボーナス時は`BONUS!`(金`#ffd54f`)。文字は太字44px(2026-08-08、22pxから2倍に拡大。「小さい」という指摘のため。縁取りの`lineWidth`も4→7に合わせて太くした)、黒い縁取り(`strokeText`→`fillText`)で1UP風にしている。`spawnPopup()`で`popups`配列に積み、`updatePopups()`が`POPUP_RISE_SPEED=40px/s`でゆっくり上に浮かせながら`POPUP_LIFE=1.1秒`でフェードアウト・消滅させる。ハートと同じく`#fx-layer`(`drawFx()`内、`drawPopup()`)に描画しているのでプレイヤーや犬より手前に見える。`updatePopups()`は`frozen`中でも常に呼ばれる(ハートと同じ扱い)
@@ -197,12 +198,16 @@ iPhoneで最初から横向きで開始した場合はゲーム画面のサイ�
 - 再アクティブ時に`last = performance.now()`でdtの基準をリセットしている。これをしないと非アクティブだった間の経過時間がまるごと次フレームの`dt`に乗ってしまい、プレイヤーが一瞬でワープしたり当たり判定がおかしくなったりする(既存の`dt > 0.05`のクランプだけでは長時間放置に対応できないため)
 - Playwrightでは実際のOSレベルのタブ切り替えは発生させられないため、`Object.defineProperty(document, 'hidden', {value: true, configurable: true})`で`document.hidden`を上書きしてから`document.dispatchEvent(new Event('visibilitychange'))`を手動発火させることでシミュレートしている。`HTMLMediaElement.prototype.play`/`pause`をスパイして、非アクティブ化時に`pause()`が1回、再アクティブ化時に`play()`が1回呼ばれること、および非アクティブ中は`player.worldY`が全く変化しないことを確認済み
 
-## 50mごとの昼/夕方カラーフィルター(2026-08-08 追加)
+## 50mごとの昼/夕方カラーフィルター(2026-08-08 追加、同日中に距離ベースのブレンドから時間ベースのフェードへ変更)
 
 - `#daynight-overlay`という`#game`いっぱいに重なる`div`(`background: #ff8a3d`、`z-index: 9`、`pointer-events: none`)を用意し、`opacity`をフレームごとに書き換えることで画面全体に色フィルターをかけている
-- `computeDuskAmount(distanceM)`が「0(昼)〜1(夕方)」を返す。`DAYNIGHT_CYCLE_M`(=50m)ごとに昼⇔夕方が交互に切り替わる(0〜50mが昼、50〜100mが夕方、100〜150mが昼…)。境界の前後`DAYNIGHT_BLEND_M`(=6m)だけ線形に滑らかにブレンドし、パキッと切り替わらないようにしている
-- ゲームループ内で`daynightOverlayEl.style.opacity = computeDuskAmount(distanceM) * DUSK_MAX_OPACITY`をセットしている。`DUSK_MAX_OPACITY`(=0.2)は「少しだけ夕方っぽく」という要望に合わせた控えめな上限値で、昼は完全に元の見た目(opacity 0)のまま
-- Playwrightで`computeDuskAmount`を複数の距離(0, 40, 44, 47, 49.9, 50, 70, 94, 97, 99.9, 100, 144, 150m)でサンプリングし、期待通りの台形波(境界だけ滑らかな0/1の交互パターン)になっていることを確認済み。また実際に`player.worldY`を書き換えて70m地点・20m地点それぞれで`daynightOverlayEl.style.opacity`が期待値(0.2 / 0)になることも確認済み
+- `computeDuskTarget(distanceM)`が「0(昼)か1(夕方)」の目標値を返す。`DAYNIGHT_CYCLE_M`(=50m)ごとに昼⇔夕方が交互に切り替わる(0〜50mが昼、50〜100mが夕方、100〜150mが昼…)
+- **境界を跨いだ瞬間から`DAYNIGHT_FADE_SEC`(=2)秒かけてフェードする**(2026-08-08 変更。当初は境界の前後`6m`だけ距離ベースで線形ブレンドしていたが、「距離に応じて徐々にではなく、50を過ぎたタイミングで2秒くらいかけてフェードすればよい」という要望で、距離ベースではなく**時間ベース**の遷移に変更した)。`let duskAmount`(現在の見た目の状態、0〜1)を毎フレーム`updateDuskAmount(dt, distanceM)`で`computeDuskTarget()`の目標値へ`dt / DAYNIGHT_FADE_SEC`ずつ直線的に近づける。境界に到達するまでは`duskAmount`は変化せず(目標が変わらないため)、境界を跨いだ瞬間に目標が切り替わり、そこから2秒かけてなめらかに移行する
+- ゲームループ内で`updateDuskAmount(dt, distanceM)`を呼んだ後`daynightOverlayEl.style.opacity = duskAmount * DUSK_MAX_OPACITY`をセットしている。`DUSK_MAX_OPACITY`(=0.2)は「少しだけ夕方っぽく」という要望に合わせた控えめな上限値で、昼は完全に元の見た目(opacity 0)のまま
+- ライフを失って`resetLife()`で距離が0に戻った場合も特別扱いはしていない。目標(`computeDuskTarget(0)`=昼)が変わるので、その時点の`duskAmount`から通常通り2秒かけて昼へフェードするだけで自然に破綻なく動く(`resetLife()`側で`maxDuskDistanceM = 0`にリセットしている、次点参照)
+- **境界付近を行き来すると昼/夕方がちらつくバグ(2026-08-08 修正)**: プレイヤーは画面内であれば後退もできる(カメラは前方にしか進まないが、プレイヤー自身の`worldY`は現在見えている範囲内で自由に動ける)。`updateDuskAmount`が生の`distanceM`をそのまま`computeDuskTarget`に渡していたため、例えば50m地点付近で49m/51mを行き来すると、跨ぐたびに目標(昼/夕方)が反転し、フェードが始まっては巻き戻る「ちらつき」になっていた(「50で夕方になるが51で昼になり52でまた夕方になる」として報告)。対策として`maxDuskDistanceM`(これまでの最大到達距離、後退しても減らない)を新設し、`updateDuskAmount`内で`maxDuskDistanceM = Math.max(maxDuskDistanceM, distanceM)`と更新してから、判定にはこちらを使うようにした。これで一度到達した境界より手前に戻っても目標は変わらず、次の境界(この例なら100m)に到達するまで昼/夕方は安定する。`duskAmount`/`maxDuskDistanceM`は`resetLife()`より前(スクリプト前方の状態変数群)で`let`宣言しておく必要がある点に注意(`resetLife()`は`resetGame()`経由でスクリプト評価中に即座に呼ばれるため、これらの変数宣言がその呼び出しより後にあるとTemporal Dead Zoneで`ReferenceError`になる)
+  - Playwrightで、51mへ到達し2.2秒待って`duskAmount`が1(夕方)になった後、49mへ後退して0.5秒待っても1のまま変化しないこと、さらに52m/48m/53m/47mと行き来しても1のまま安定すること、`resetLife()`を呼ぶと2.2秒かけて0(昼)に戻ることを確認済み
+- Playwrightで、境界直前(49m)では`duskAmount`が変化しないこと、境界を跨いだ直後(51m)から`duskAmount`が0→1へ約2秒(50ms時点0.025、1000ms時点0.52、2000ms時点1.0)で線形にフェードすること、`daynightOverlayEl`の`opacity`が`duskAmount * DUSK_MAX_OPACITY`と一致することを確認済み
 
 ## 初回起動時の「あそびかた」説明画面(2026-08-08 追加)
 

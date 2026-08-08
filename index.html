@@ -152,13 +152,13 @@
     color: #fff;
     text-shadow: 0 1px 3px rgba(0,0,0,0.6);
     font-family: sans-serif;
-    font-size: 36px; /* 2026-08-08: 18pxから2倍に拡大(文字が全体的に小さいという指摘のため) */
+    font-size: 36px;
     font-weight: bold;
     text-align: right;
     z-index: 6;
   }
   #hud .best {
-    font-size: 26px; /* 2026-08-08: 13pxから2倍に拡大 */
+    font-size: 26px;
     font-weight: normal;
     opacity: 0.85;
   }
@@ -206,7 +206,7 @@
   }
   #life-bar-track {
     width: 180px;
-    height: 16px;
+    height: 32px;
     background: rgba(0, 0, 0, 0.35);
     border: 2px solid rgba(255, 255, 255, 0.7);
     border-radius: 8px;
@@ -617,7 +617,7 @@
 
   // --- BGM ---
   const BGM_SRC = 'SE/iwashiro_kokage_biyori.mp3';
-  const BGM_VOLUME = 0.15; // BGMの音量(0〜1)
+  const BGM_VOLUME = 0.1; // BGMの音量(0〜1)
 
   const bgmAudio = new Audio(BGM_SRC);
   bgmAudio.loop = true;
@@ -966,7 +966,7 @@
   const BALLOON_SCALE = 0.15; // 表示の大きさ
   const BALLOON_R = 26; // 当たり判定の半径
   const BALLOON_SPAWN_DISTANCE_M = 5; // これだけ進むごとに1匹出現(同時に存在するのは1つまで)
-  const BALLOON_APPROACH_SPEED = 18; // 自機が止まっていても少しずつ近づいてくる速度(px/s、ゆっくりめ)
+  const BALLOON_APPROACH_SPEED = 40; // 自機が止まっていても少しずつ近づいてくる速度(px/s、ゆっくりめ)
   const BALLOON_SWAY_AMP = 55; // 蛇行の左右の振れ幅(px)
   const BALLOON_SWAY_SPEED = 1.6; // 蛇行の速さ(rad/s)
   const BALLOON_HEAL_RATIO = 0.25; // ライフが満タンでない時の回復量(最大HPに対する割合)
@@ -975,10 +975,11 @@
   const BALLOON_SCATTER_PICKUP_DELAY = 1; // ばらまかれてから拾えるようになるまでの秒数
   // ばらまき演出(ハートと同じような放物線 + 小さく2回バウンド)のパラメータ
   const SCATTER_FLIGHT_TIME = 0.6; // 中心から目的地まで飛んでいく時間(秒)
-  const SCATTER_HOP_SPEED = 300; // 最初のホップの高さを決める初速
+  const SCATTER_HOP_SPEED = 400; // 最初のホップの高さを決める初速
   const SCATTER_GRAVITY = 1400;
-  const SCATTER_BOUNCE_COUNT = 2; // 着地後に小さくバウンドする回数
-  const SCATTER_BOUNCE_DAMPING = 0.45; // バウンドのたびに勢いが弱まる割合
+  const SCATTER_BOUNCE_COUNT = 1; // 着地後に小さくバウンドする回数
+  const SCATTER_BOUNCE_DAMPING = 0.5; // バウンドのたびに勢いが弱まる割合
+  const SCATTER_STAGGER_SEC = 0.3; // 飛び始めをコインごとにこの範囲でランダムにずらす(0〜秒)
 
   let balloonImg = null;
   let balloon = null; // { baseX, worldY, swayPhase } / 存在しない時はnull
@@ -1044,6 +1045,7 @@
         hopVz: SCATTER_HOP_SPEED,
         hopZ: 0,
         bounces: 0,
+        delay: Math.random() * SCATTER_STAGGER_SEC, // 飛び始めを少しずつずらして一斉に動くのを防ぐ
       };
       coins.push(coin);
     }
@@ -1054,6 +1056,11 @@
   // 描画時にscreenYから引く(drawWorld側)。着地を数回繰り返すごとに勢いが弱まり、最後は完全に静止する
   function updateCoinScatter(coin, dt) {
     const s = coin.scatter;
+    if (s.delay > 0) {
+      // 個別にずらした遅延時間が過ぎるまでは自機の位置で足止めしておく(見た目は自機に重なって隠れる)
+      s.delay -= dt;
+      return;
+    }
     s.t = Math.min(1, s.t + dt / SCATTER_FLIGHT_TIME);
     coin.worldX = s.originX + (s.targetX - s.originX) * s.t;
     coin.worldY = s.originY + (s.targetY - s.originY) * s.t;
@@ -1211,6 +1218,8 @@
   let currentScore = 0;
   let bestScore = 0;
   let frozen = false; // ヒット硬直中・ゲームオーバー画面表示中はtrue(移動と当たり判定を止める)
+  let duskAmount = 0; // 昼/夕方フィルターの現在の見た目の状態(0=昼〜1=夕方)
+  let maxDuskDistanceM = 0; // 昼/夕方の切り替え判定専用の「これまでの最大到達距離」(戻っても後退しない)
 
   // --- ライフ・残機 ---
   const MAX_HP = 100;
@@ -1256,6 +1265,7 @@
     hp = MAX_HP;
     invincibleUntil = 0;
     frozen = false;
+    maxDuskDistanceM = 0; // 新しいライフは昼(0m)から再スタート
     playerEl.classList.remove('hit', 'licked', 'invincible');
     missEl.classList.remove('show');
   }
@@ -1496,26 +1506,29 @@
     for (const p of popups) drawPopup(fctx, p);
   }
 
-  // --- 昼/夕方の色フィルター(50mごとに交互、境界付近だけなめらかに切り替える) ---
+  // --- 昼/夕方の色フィルター(50mごとに交互。距離に応じてではなく、境界を跨いだ瞬間に
+  //     一定時間かけてフェードする) ---
   const DAYNIGHT_CYCLE_M = 50; // これだけ進むごとに昼⇔夕方が切り替わる
-  const DAYNIGHT_BLEND_M = 6; // 切り替わり境界のグラデーション幅(m)
+  const DAYNIGHT_FADE_SEC = 2; // 境界を跨いだ瞬間からこの秒数かけてフェードする
   const DUSK_MAX_OPACITY = 0.2; // 夕方フィルターの最大の濃さ(少しだけ、を意識した控えめな値)
 
-  // 0(昼)〜1(夕方)を返す。DAYNIGHT_CYCLE_Mごとに昼/夕方が交互になり、境界の前後だけ滑らかに移行する
-  function computeDuskAmount(distanceM) {
+  // 0(昼)か1(夕方)かの「目標」を返す。DAYNIGHT_CYCLE_Mごとに交互になる(0〜50=昼、50〜100=夕方…)
+  function computeDuskTarget(distanceM) {
     const superCycle = DAYNIGHT_CYCLE_M * 2;
     const pos = ((distanceM % superCycle) + superCycle) % superCycle; // 0〜100
-    if (pos < DAYNIGHT_CYCLE_M) {
-      // 昼の区間。終盤だけ夕方へブレンドしていく
-      const intoDay = DAYNIGHT_CYCLE_M - pos;
-      if (intoDay < DAYNIGHT_BLEND_M) return 1 - intoDay / DAYNIGHT_BLEND_M;
-      return 0;
-    }
-    // 夕方の区間。終盤だけ昼へブレンドしていく
-    const intoDusk = pos - DAYNIGHT_CYCLE_M;
-    const remaining = DAYNIGHT_CYCLE_M - intoDusk;
-    if (remaining < DAYNIGHT_BLEND_M) return remaining / DAYNIGHT_BLEND_M;
-    return 1;
+    return pos < DAYNIGHT_CYCLE_M ? 0 : 1;
+  }
+
+  // duskAmountを目標値へDAYNIGHT_FADE_SEC秒かけて直線的に近づける。
+  // 判定にはdistanceMをそのまま使わず「これまでの最大到達距離」(maxDuskDistanceM)を使う。
+  // プレイヤーは画面内なら後退もできるため、境界付近を行き来すると生の距離では
+  // 昼/夕方の目標が跨ぐたびに反転してしまい、フェードが始まっては巻き戻る「ちらつき」になっていた
+  function updateDuskAmount(dt, distanceM) {
+    maxDuskDistanceM = Math.max(maxDuskDistanceM, distanceM);
+    const target = computeDuskTarget(maxDuskDistanceM);
+    const step = dt / DAYNIGHT_FADE_SEC;
+    if (duskAmount < target) duskAmount = Math.min(target, duskAmount + step);
+    else if (duskAmount > target) duskAmount = Math.max(target, duskAmount - step);
   }
 
   // --- タブが非アクティブになったらBGMを止め、ゲーム全体も一時停止する ---
@@ -1553,7 +1566,8 @@
     ensureLanes(camera.top);
 
     const distanceM = Math.max(0, -player.worldY / LANE_H);
-    daynightOverlayEl.style.opacity = computeDuskAmount(distanceM) * DUSK_MAX_OPACITY;
+    updateDuskAmount(dt, distanceM);
+    daynightOverlayEl.style.opacity = duskAmount * DUSK_MAX_OPACITY;
     ensureDogPopulation(distanceM, camera.top);
     updateDogs(dt, distanceM);
     // デバッグ用の画面内犬数表示は不要になったのでコメントアウト(2026-08-08)
