@@ -13,7 +13,7 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #7ec850;
+    background: #5ea830;
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
@@ -433,9 +433,82 @@
 
   // --- 論理解像度を初回起動時のウィンドウサイズに固定し、以降のリサイズは拡大縮小のみで対応する ---
   const BASE_W = 800;
-  const BASE_H = 600;
+  // 犬・コイン・レーンは常にこの縦深さ分だけ生成・管理しておく(=縦持ち時にちょうど収まる1.5倍の深さ)。
+  // 横向きでは実際に見えるのは手前のviewH(600)分だけだが、奥側300分も既に生成済みにしておくことで、
+  // プレイ中に縦持ちへ切り替えても、切り替えた瞬間から奥まで犬・コインが埋まった状態で表示される
+  // (逆に「表示・当たり判定・SE」の範囲は現在のviewHだけでクリップする、という役割分担)
+  const WORLD_H = 900;
+  const LANDSCAPE_VIEW_H = 600; // 横向き・PCで実際に見える縦の範囲(今までのBASE_H相当)
+  const MIN_JOYSTICK_H = 100; // 縦持ちでジョイスティック用に必ず確保しておく最低の高さ(px)
+  // カメラの前方追従(「プレイヤーが画面下から何pxの範囲なら自由に動けて、そこを超えたら前方へ
+  // スクロールが始まるか」)は、向きの切り替え自体では変わらないよう固定値にする(viewHを直接
+  // 使うと、向きを切り替えてviewHが変わっただけでプレイヤーが移動していないのにcamera.topが
+  // 再計算され、画面上の見た目の位置がズレる=縦横切り替えのタイミングで自機がガクッと動いて
+  // 見えるバグになるため)。横向きは今までの感覚(画面下から120px=8割地点)のまま、縦持ちは画面が
+  // 縦に長い分、少しだけ余裕を持たせている(画面下から150px。「横のスクロール開始位置に近いが、
+  // 少し高め・長めでもよい」という要望に合わせた)
+  const SCROLL_TRIGGER_FROM_BOTTOM_LANDSCAPE = LANDSCAPE_VIEW_H * 0.2; // =120px
+  const SCROLL_TRIGGER_FROM_BOTTOM_PORTRAIT = 150; // 横向きの120pxより少しだけ長め
+  let viewH = LANDSCAPE_VIEW_H; // 現在実際に見えている(描画・音・当たり判定に使う)縦の範囲。applyLayout()が向きに応じて更新する
+
+  // 現在の向きに応じた「先読み距離」(camera.top = player.worldY - この値、で前方追従する)を返す。
+  // viewHが変わった瞬間はapplyLayout()側でcamera.topを別途補正しているので、この関数自体は
+  // 単に「今の向きなら画面下から何pxが自由に動けるか」を返すだけでよい
+  function cameraLookahead() {
+    return viewH - (viewH === WORLD_H ? SCROLL_TRIGGER_FROM_BOTTOM_PORTRAIT : SCROLL_TRIGGER_FROM_BOTTOM_LANDSCAPE);
+  }
+  const camera = { top: 0 }; // 表示中の矩形の上端に対応するワールドY座標。applyLayout()内でviewHの変化分だけ調整する
   gameEl.style.width = BASE_W + 'px';
-  gameEl.style.height = BASE_H + 'px';
+
+  // --- キャンバス(レーンの背景と犬を描画) ---
+  const worldCanvas = document.getElementById('world');
+  const wctx = worldCanvas.getContext('2d');
+  const fxCanvas = document.getElementById('fx-layer');
+  const fctx = fxCanvas.getContext('2d');
+
+  function resizeCanvas(canvas, ctx) {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = BASE_W * dpr;
+    canvas.height = viewH * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // --- スマホ(仮想ジョイスティック)入力 ---
+  // nipplejsは生成時のzone要素の位置・サイズを基準にするため、縦横切り替えでzoneのサイズ・位置が
+  // 変わった時にmanagerを使い回すと、繰り返し切り替えるうちにタッチ位置とジョイスティックの反応が
+  // ズレていく不具合があった。applyLayout()がzoneのサイズを変更するたびに一度destroy()して
+  // 作り直す(setupJoystick())ことで、常に最新のzoneの実サイズを基準にした状態にしている
+  let manager = null;
+  let joyVector = { x: 0, y: 0 };
+  const joystickHintEl = document.getElementById('joystick-hint');
+
+  function setupJoystick() {
+    if (manager) manager.destroy();
+    manager = nipplejs.create({
+      zone: zone,
+      mode: 'dynamic', // 触れた場所を中心にする
+      color: 'white',
+      size: 100,
+    });
+    manager.on('start', () => {
+      // 操作中は常時表示用のヒント絵とnipplejs本体のジョイスティックが重なって見えるので、操作中だけヒントを隠す
+      joystickHintEl.classList.add('hide');
+    });
+    manager.on('move', (evt, data) => {
+      startBGM();
+      if (data.vector) {
+        // nipplejsのyは上が+なので、画面座標(下が+)に合わせて反転
+        joyVector = { x: data.vector.x, y: -data.vector.y };
+        tryResume(); // ヒット硬直中はジョイスティック操作でも復帰できるようにする
+      }
+    });
+    manager.on('end', () => {
+      joyVector = { x: 0, y: 0 };
+      joystickHintEl.classList.remove('hide');
+    });
+  }
+  setupJoystick();
+  let lastPortraitMode = window.innerWidth < window.innerHeight; // setupJoystick()を再実行すべきタイミングの判定用
 
   // PC・横向き: 画面いっぱいに収まる最大サイズへcontain方式で縮小し、中央に配置する(従来通り)。
   //   ジョイスティックは画面左下の半分をタッチ領域として使う(ゲーム画面に重ねて半透明表示)
@@ -445,9 +518,25 @@
   //   縦持ちのままでも問題なく遊べるようにする(2026-08-08 変更)
   function applyLayout() {
     const portrait = window.innerWidth < window.innerHeight;
+    const newViewH = portrait ? WORLD_H : LANDSCAPE_VIEW_H; // 縦持ちは常に世界の全深さ(WORLD_H)をそのまま見せる
+    if (newViewH !== viewH) {
+      // 表示矩形の「下端」(camera.top + viewH)は据え置き、「上端」(camera.top、奥側)だけを
+      // 変化分だけ伸縮させる。画面最下部にいるプレイヤーの見た目の位置がずれないようにするため
+      camera.top += viewH - newViewH;
+      viewH = newViewH;
+    }
+    gameEl.style.height = viewH + 'px';
+    resizeCanvas(worldCanvas, wctx);
+    resizeCanvas(fxCanvas, fctx);
     if (portrait) {
-      const scale = window.innerWidth / BASE_W;
-      const gameH = BASE_H * scale;
+      // 横幅基準が基本だが、正方形に近いウィンドウ(例: 790x790)だと横幅基準のスケールのままだと
+      // ゲーム画面の高さ(viewH*scale)が実際の画面の高さを超えてしまい、その下に置いているはずの
+      // ジョイスティックが画面外に押し出されてしまう。高さ基準のスケール(ジョイスティック用に
+      // MIN_JOYSTICK_H分を差し引いた残りに収める)も上限として掛け合わせ、どちらか小さい方を
+      // 採用することで、ゲーム画面が画面をはみ出さず、かつジョイスティックの最低限の高さも確保する
+      const heightBudget = Math.max(1, window.innerHeight - MIN_JOYSTICK_H); // 極端に低い画面でscaleが0以下にならないようにする
+      const scale = Math.min(window.innerWidth / BASE_W, heightBudget / viewH);
+      const gameH = viewH * scale;
       gameEl.style.left = '50%';
       gameEl.style.top = '0';
       gameEl.style.transformOrigin = 'top center'; // 縮小の基準を上端にし、上端がぴったり画面上部に張り付くようにする
@@ -458,7 +547,7 @@
       zone.style.width = '100%';
       zone.style.height = Math.max(0, window.innerHeight - gameH) + 'px';
     } else {
-      const scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
+      const scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / viewH);
       gameEl.style.left = '50%';
       gameEl.style.top = '50%';
       gameEl.style.transformOrigin = 'center center';
@@ -468,6 +557,11 @@
       zone.style.bottom = '0';
       zone.style.width = '50%';
       zone.style.height = '50%';
+    }
+    if (portrait !== lastPortraitMode) {
+      // zoneのサイズ・位置が縦持ち/横向きで切り替わったので、nipplejsを作り直して最新のzoneを基準にさせる
+      lastPortraitMode = portrait;
+      setupJoystick();
     }
   }
 
@@ -523,34 +617,6 @@
     return { x: vx, y: vy };
   }
 
-  // --- スマホ(仮想ジョイスティック)入力 ---
-  const manager = nipplejs.create({
-    zone: zone,
-    mode: 'dynamic', // 触れた場所を中心にする
-    color: 'white',
-    size: 100,
-  });
-
-  let joyVector = { x: 0, y: 0 };
-
-  const joystickHintEl = document.getElementById('joystick-hint');
-  manager.on('start', () => {
-    // 操作中は常時表示用のヒント絵とnipplejs本体のジョイスティックが重なって見えるので、操作中だけヒントを隠す
-    joystickHintEl.classList.add('hide');
-  });
-  manager.on('move', (evt, data) => {
-    startBGM();
-    if (data.vector) {
-      // nipplejsのyは上が+なので、画面座標(下が+)に合わせて反転
-      joyVector = { x: data.vector.x, y: -data.vector.y };
-      tryResume(); // ヒット硬直中はジョイスティック操作でも復帰できるようにする
-    }
-  });
-  manager.on('end', () => {
-    joyVector = { x: 0, y: 0 };
-    joystickHintEl.classList.remove('hide');
-  });
-
   // --- 効果音(SE): Howler.js(ゲーム音声向けライブラリ、CDNから読み込み)で再生する ---
   // 自前のWeb Audio API実装(AudioContext.resume()での手動アンロック)でも、iPhone実機で
   // 再生タイミングによっては`audioCtx.state`が`suspended`のまま(=無音)になることがあった。
@@ -567,7 +633,7 @@
   const SE_COIN_SRC = 'SE/coin.mp3';
   const COIN_SE_MIN_INTERVAL_MS = 100; // 同じSEを鳴らしてから最低これだけ間を空ける
   const DOG_SE_MIN_INTERVAL_MS = 220; // 犬の匹数が多い時に鳴き声が団子状に重なりすぎないよう間引く
-  const DOG_SE_VOLUME = 0.07; // 犬の鳴き声の音量(0〜1)
+  const DOG_SE_VOLUME = 0.15; // 犬の鳴き声の音量(0〜1)
   const COIN_SE_VOLUME = 0.9; // コイン獲得音の音量(0〜1)
 
   function createSEHowl(src, volume) {
@@ -694,7 +760,7 @@
 
   function ensureLanes(camTop) {
     if (lanes.length === 0) {
-      while (nextLaneIndex * LANE_H < -camTop + BASE_H + GEN_BUFFER) {
+      while (nextLaneIndex * LANE_H < -camTop + WORLD_H + GEN_BUFFER) {
         lanes.push(createLane(nextLaneIndex));
         nextLaneIndex++;
       }
@@ -703,7 +769,7 @@
       lanes.push(createLane(nextLaneIndex));
       nextLaneIndex++;
     }
-    const camBottom = camTop + BASE_H;
+    const camBottom = camTop + viewH;
     while (lanes.length > 0 && lanes[0].laneTop > camBottom + REMOVE_BUFFER) {
       lanes.shift();
     }
@@ -737,7 +803,7 @@
     dog.speed = speedBase + Math.random() * 120;
     dog.worldX = Math.random() * BASE_W;
     const forwardEdge = Math.min(camTop, -SAFE_DISTANCE_PX);
-    dog.baseWorldY = forwardEdge - Math.random() * (BASE_H + GEN_BUFFER);
+    dog.baseWorldY = forwardEdge - Math.random() * (WORLD_H + GEN_BUFFER);
     dog.frameIndex = Math.floor(Math.random() * 4);
     dog.frameTimer = Math.random() * 0.1;
     dog.frameInterval = 0.09 + Math.random() * 0.03;
@@ -751,7 +817,7 @@
 
   function isDogOnScreen(dog, camTop) {
     const screenY = dog.baseWorldY + dog.yOffset - camTop;
-    return screenY > -dogFrameH && screenY < BASE_H + dogFrameH;
+    return screenY > -dogFrameH && screenY < viewH + dogFrameH;
   }
 
   function ensureDogPopulation(distanceM, camTop) {
@@ -776,7 +842,7 @@
   }
 
   function updateDogs(dt, distanceM) {
-    const camBottom = camera.top + BASE_H;
+    const camBottom = camera.top + viewH;
     const half = dogFrameW / 2;
     const target = targetDogCount(distanceM);
     for (const dog of dogs) {
@@ -796,7 +862,7 @@
       if (wrapped) {
         // 画面の端から犬が現れた瞬間。実際に見えている(画面内の縦位置にいる)時だけ鳴らす
         const screenY = dog.baseWorldY + dog.yOffset - camera.top;
-        if (screenY > -dogFrameH && screenY < BASE_H + dogFrameH) playDogSE();
+        if (screenY > -dogFrameH && screenY < viewH + dogFrameH) playDogSE();
       }
 
       dog.bobPhase += dt * dog.bobFreq;
@@ -870,7 +936,7 @@
   // コイン1枚分の状態を(再)初期化する。犬と同様、カメラより先の未表示エリアに配置し直して使い回す
   function resetCoin(coin, camTop) {
     coin.worldX = Math.random() * BASE_W;
-    coin.worldY = Math.min(camTop, 0) - Math.random() * (BASE_H + GEN_BUFFER);
+    coin.worldY = Math.min(camTop, 0) - Math.random() * (WORLD_H + GEN_BUFFER);
     coin.frameIndex = Math.floor(Math.random() * COIN_FRAME_COUNT);
     coin.frameTimer = Math.random() * 0.1;
     coin.magnetized = false;
@@ -898,7 +964,7 @@
   }
 
   function updateCoins(dt) {
-    const camBottom = camera.top + BASE_H;
+    const camBottom = camera.top + viewH;
     for (const coin of coins) {
       if (coin.pickupDelay > 0) {
         coin.pickupDelay -= dt;
@@ -1068,7 +1134,7 @@
     balloon.swayPhase += dt * BALLOON_SWAY_SPEED;
 
     const screenY = balloon.worldY - camera.top;
-    if (screenY > BASE_H + 60) {
+    if (screenY > viewH + 60) {
       balloon = null; // 誰にも回収されず画面下まで流れていったら消える
       return;
     }
@@ -1198,7 +1264,6 @@
   // --- プレイヤー & カメラ(前方へのみ進むスクロール) ---
   const player = { worldX: 0, worldY: 0, r: 18 };
   const PLAYER_HIT_R = player.r * 0.8; // 見た目より少し小さめの当たり判定にする
-  const camera = { top: 0 };
   let currentScore = 0;
   let bestScore = 0;
   let frozen = false; // ヒット硬直中・ゲームオーバー画面表示中はtrue(移動と当たり判定を止める)
@@ -1237,7 +1302,7 @@
   function resetLife() {
     player.worldX = BASE_W / 2;
     player.worldY = 0;
-    camera.top = -BASE_H * 0.8;
+    camera.top = -cameraLookahead();
     resetLanes();
     resetDogs();
     resetCoinPositions();
@@ -1379,7 +1444,7 @@
     if (!dogFrameSets) return;
     if (introActive) return; // あそびかた説明中は当たらない
     if (performance.now() < invincibleUntil) return; // 無敵中は当たらない
-    if (player.worldY > camera.top + BASE_H - BOTTOM_SAFE_ZONE_PX) return; // 画面最下部の安全地帯
+    if (player.worldY > camera.top + viewH - BOTTOM_SAFE_ZONE_PX) return; // 画面最下部の安全地帯
     const hitW = dogFrameW * 0.55;
     const hitH = dogFrameH * (HIT_BOTTOM_RATIO - HIT_TOP_RATIO);
     for (const dog of dogs) {
@@ -1395,21 +1460,6 @@
     }
   }
 
-  // --- キャンバス(レーンの背景と犬を描画) ---
-  const worldCanvas = document.getElementById('world');
-  const wctx = worldCanvas.getContext('2d');
-  const fxCanvas = document.getElementById('fx-layer');
-  const fctx = fxCanvas.getContext('2d');
-
-  function resizeCanvas(canvas, ctx) {
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = BASE_W * dpr;
-    canvas.height = BASE_H * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  resizeCanvas(worldCanvas, wctx);
-  resizeCanvas(fxCanvas, fctx);
-
   // 犬・コインの足元の地面につく影(横長の楕円)。犬やコインはジャンプ/バウンドで上下に動くが、影は地面の高さに固定する
   const SHADOW_Y_RATIO = 0.88; // 犬の画像の縦方向のどの位置を接地点とみなすか(50%が中心)
 
@@ -1424,7 +1474,7 @@
 
   function drawWorld() {
     const w = BASE_W;
-    const h = BASE_H;
+    const h = viewH;
     wctx.fillStyle = '#7ec850';
     wctx.fillRect(0, 0, w, h);
 
@@ -1485,7 +1535,7 @@
   }
 
   function drawFx() {
-    fctx.clearRect(0, 0, BASE_W, BASE_H);
+    fctx.clearRect(0, 0, BASE_W, viewH);
     for (const h of hearts) drawHeart(fctx, h.x, h.y - camera.top, h.size, h.alpha);
     for (const p of popups) drawPopup(fctx, p);
   }
@@ -1573,12 +1623,12 @@
       let ny = player.worldY + v.y * effectiveSpeed * dt;
 
       nx = Math.max(player.r, Math.min(BASE_W - player.r, nx));
-      ny = Math.max(camera.top + player.r, Math.min(camera.top + BASE_H - player.r, ny));
+      ny = Math.max(camera.top + player.r, Math.min(camera.top + viewH - player.r, ny));
 
       player.worldX = nx;
       player.worldY = ny;
 
-      camera.top = Math.min(camera.top, player.worldY - BASE_H * 0.8);
+      camera.top = Math.min(camera.top, player.worldY - cameraLookahead());
 
       updateCoins(dt);
       checkCollision();
