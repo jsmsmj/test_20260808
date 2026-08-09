@@ -281,37 +281,6 @@
     pointer-events: none;
     z-index: 9;
   }
-  #rotate-overlay {
-    position: fixed;
-    inset: 0;
-    background: #222;
-    color: #fff;
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-family: sans-serif;
-    text-align: center;
-    padding: 24px;
-    box-sizing: border-box;
-    z-index: 100;
-  }
-  #rotate-overlay.show {
-    display: flex;
-  }
-  #rotate-overlay .rotate-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-    animation: rotate-hint 1.6s ease-in-out infinite;
-  }
-  #rotate-overlay .rotate-text {
-    font-size: 18px;
-    font-weight: bold;
-  }
-  @keyframes rotate-hint {
-    0%, 100% { transform: rotate(0deg); }
-    50% { transform: rotate(90deg); }
-  }
   /* 初回起動時の遊び方説明。#game(scaleで縮小される)の外側、#viewport基準で全画面に出すことで
      #gameが小さい端末でも文字が縮小されず読みやすいままにしている */
   #intro-overlay {
@@ -413,10 +382,6 @@
   <div id="joystick-zone">
     <div id="joystick-hint"></div>
   </div>
-  <div id="rotate-overlay">
-    <div class="rotate-icon">📱</div>
-    <div class="rotate-text">画面を横向きにしてください</div>
-  </div>
   <div id="intro-overlay">
     <span class="intro-title">あそびかた</span>
     <span class="intro-goal">奥(画面上)へ進んでコインを集めよう!</span>
@@ -462,7 +427,6 @@
   const dogDebugActualEl = document.getElementById('dogDebugActual');
   const dogDebugTargetEl = document.getElementById('dogDebugTarget');
   const daynightOverlayEl = document.getElementById('daynight-overlay');
-  const rotateOverlayEl = document.getElementById('rotate-overlay');
   const introOverlayEl = document.getElementById('intro-overlay');
   const introDogIconEl = document.getElementById('intro-icon-dog');
   const introCoinIconEl = document.getElementById('intro-icon-coin');
@@ -473,22 +437,42 @@
   gameEl.style.width = BASE_W + 'px';
   gameEl.style.height = BASE_H + 'px';
 
-  function applyViewportScale() {
-    const scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
-    gameEl.style.transform = `translate(-50%, -50%) scale(${scale})`;
-  }
-
-  // --- スマホ縦持ち対策: 論理解像度が横長(800x600)なので、縦持ちだと画面の一部しか使えない。
-  //     縦持ちの間はゲームを止めて「横向きにしてください」の案内を出す ---
-  let orientationBlocked = false;
-  function checkOrientation() {
-    orientationBlocked = window.innerWidth < window.innerHeight;
-    rotateOverlayEl.classList.toggle('show', orientationBlocked);
+  // PC・横向き: 画面いっぱいに収まる最大サイズへcontain方式で縮小し、中央に配置する(従来通り)。
+  //   ジョイスティックは画面左下の半分をタッチ領域として使う(ゲーム画面に重ねて半透明表示)
+  // スマホ縦持ち: 論理解像度(800x600、横長)の縦横比は変えず、横幅いっぱいに合わせて画面上部に配置する。
+  //   縦は余った分だけ使われる形になり、その下の残り領域をジョイスティック専用のスペースとして
+  //   丸ごと確保する(ゲーム画面とは重ならない)。「縦持ちにしてください」という誘導は行わず、
+  //   縦持ちのままでも問題なく遊べるようにする(2026-08-08 変更)
+  function applyLayout() {
+    const portrait = window.innerWidth < window.innerHeight;
+    if (portrait) {
+      const scale = window.innerWidth / BASE_W;
+      const gameH = BASE_H * scale;
+      gameEl.style.left = '50%';
+      gameEl.style.top = '0';
+      gameEl.style.transformOrigin = 'top center'; // 縮小の基準を上端にし、上端がぴったり画面上部に張り付くようにする
+      gameEl.style.transform = `translate(-50%, 0) scale(${scale})`;
+      zone.style.left = '0';
+      zone.style.top = gameH + 'px';
+      zone.style.bottom = '';
+      zone.style.width = '100%';
+      zone.style.height = Math.max(0, window.innerHeight - gameH) + 'px';
+    } else {
+      const scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
+      gameEl.style.left = '50%';
+      gameEl.style.top = '50%';
+      gameEl.style.transformOrigin = 'center center';
+      gameEl.style.transform = `translate(-50%, -50%) scale(${scale})`;
+      zone.style.left = '0';
+      zone.style.top = '';
+      zone.style.bottom = '0';
+      zone.style.width = '50%';
+      zone.style.height = '50%';
+    }
   }
 
   function handleResize() {
-    applyViewportScale();
-    checkOrientation();
+    applyLayout();
   }
   window.addEventListener('resize', handleResize);
   // iOS Safariは回転直後、window.innerWidth/innerHeightがアドレスバー等の
@@ -1547,16 +1531,16 @@
 
   // --- ゲームループ ---
   let last = performance.now();
-  let wasBlocked = false;
+  let wasPaused = false;
   function loop(now) {
-    if (gamePaused || orientationBlocked) {
-      wasBlocked = true;
+    if (gamePaused) {
+      wasPaused = true;
       requestAnimationFrame(loop);
       return;
     }
-    if (wasBlocked) {
-      last = now; // 縦持ち案内中に止まっていた分、dtが跳ね上がらないよう基準をリセット
-      wasBlocked = false;
+    if (wasPaused) {
+      last = now; // 一時停止中に止まっていた分、dtが跳ね上がらないよう基準をリセット
+      wasPaused = false;
     }
 
     let dt = (now - last) / 1000;
