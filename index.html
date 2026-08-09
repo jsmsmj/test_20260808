@@ -812,6 +812,8 @@
     dog.bobAmp = 5 + Math.random() * 5;
     dog.yOffset = 0;
     dog.stopped = false;
+    dog.fleeing = false; // 昼夕方の切り替えで逃走中・静止中だった場合も、再配置されたら通常状態に戻す
+    dog.duskFrozen = false;
     dog.patternIndex = Math.floor(Math.random() * DOG_PATTERN_SRCS.length);
   }
 
@@ -847,12 +849,13 @@
     const target = targetDogCount(distanceM);
     for (const dog of dogs) {
       if (dog.stopped) continue; // ミスの原因になった犬はその場で静止させる
+      if (dog.duskFrozen) continue; // 「エサの時間」の呼びかけを理解している間は静止させる
 
       dog.worldX += dog.dir * dog.speed * dt;
       const wantsWrap = (dog.dir === 1 && dog.worldX > BASE_W + half) || (dog.dir === -1 && dog.worldX < -half);
-      if (wantsWrap && dogs.length > target) {
-        // 匹数が超過している間は、画面端まで達しても反対側から再出現させず、
-        // そのまま画面の外(=見えなくなった状態)で退場させる
+      if (wantsWrap && (dogs.length > target || dog.fleeing)) {
+        // 匹数が超過している間、または昼夕方の切り替えで逃走中の犬は、画面端まで達しても
+        // 反対側から再出現させず、そのまま画面の外(=見えなくなった状態)で退場させる
         dog.gone = true;
         continue;
       }
@@ -932,6 +935,21 @@
 
   let coins = [];
   let currentCoins = 0;
+
+  // --- 昼夕方の切り替え演出で使う「エサの吹き出し」画像(いずれも白背景なのでコインと同じ方式で透過する) ---
+  // food1.png: 呼びかけ用の大きい横長の吹き出し(画面右からスライドインする)
+  // food2.png: 各犬の頭上に出す小さい吹き出し(犬がごはんに気づいて走り去る合図)
+  const FOOD_BIG_SRC = 'imgs/food1.png';
+  const FOOD_SMALL_SRC = 'imgs/food2.png';
+  let foodBigImg = null;
+  let foodSmallImg = null;
+
+  loadImage(FOOD_BIG_SRC)
+    .then((img) => { foodBigImg = chromaKeyToCanvas(img, COIN_KEY_COLOR, COIN_KEY_THRESHOLD, COIN_KEY_FEATHER); })
+    .catch((err) => console.error('food1画像の読み込みに失敗しました', err));
+  loadImage(FOOD_SMALL_SRC)
+    .then((img) => { foodSmallImg = chromaKeyToCanvas(img, COIN_KEY_COLOR, COIN_KEY_THRESHOLD, COIN_KEY_FEATHER); })
+    .catch((err) => console.error('food2画像の読み込みに失敗しました', err));
 
   // コイン1枚分の状態を(再)初期化する。犬と同様、カメラより先の未表示エリアに配置し直して使い回す
   function resetCoin(coin, camTop) {
@@ -1269,6 +1287,8 @@
   let frozen = false; // ヒット硬直中・ゲームオーバー画面表示中はtrue(移動と当たり判定を止める)
   let duskAmount = 0; // 昼/夕方フィルターの現在の見た目の状態(0=昼〜1=夕方)
   let maxDuskDistanceM = 0; // 昼/夕方の切り替え判定専用の「これまでの最大到達距離」(戻っても後退しない)
+  let lastDuskTarget = null; // 直前のcomputeDuskTarget()の結果。nullは「まだ未判定」(初回は演出を発生させない)
+  let duskCallSeq = null; // 昼夕方切り替え時の「エサの時間だよー」演出の進行状態。null=演出なし、{phase:'sliding'|'frozen', timer}
 
   // --- ライフ・残機 ---
   const MAX_HP = 100;
@@ -1315,6 +1335,8 @@
     invincibleUntil = 0;
     frozen = false;
     maxDuskDistanceM = 0; // 新しいライフは昼(0m)から再スタート
+    lastDuskTarget = null; // リスタート直後に昼/夕方の「切り替わった」判定が誤発火しないようにする
+    duskCallSeq = null; // 進行中だった「エサの時間」演出も打ち切る
     playerEl.classList.remove('hit', 'licked', 'invincible');
     missEl.classList.remove('show');
   }
@@ -1448,6 +1470,7 @@
     const hitW = dogFrameW * 0.55;
     const hitH = dogFrameH * (HIT_BOTTOM_RATIO - HIT_TOP_RATIO);
     for (const dog of dogs) {
+      if (dog.fleeing || dog.duskFrozen) continue; // 「エサの時間」演出中(静止中・逃走中とも)は当たらない
       const dogY = dog.baseWorldY + dog.yOffset;
       const hitTop = dogY + dogFrameH * (HIT_TOP_RATIO - 0.5);
       const hitCenterY = hitTop + hitH / 2;
@@ -1528,16 +1551,44 @@
         if (dog.dir === 1) wctx.scale(-1, 1);
         wctx.drawImage(frame, -dogFrameW / 2, -dogFrameH / 2, dogFrameW, dogFrameH);
         wctx.restore();
+
+        // 逃走中は頭上に小さい「エサに気づいた」吹き出しを出す
+        if (dog.fleeing && foodSmallImg) {
+          const fw = foodSmallImg.width * FOOD_SMALL_SCALE;
+          const fh = foodSmallImg.height * FOOD_SMALL_SCALE;
+          wctx.drawImage(foodSmallImg, dog.worldX - fw / 2, screenY - dogFrameH / 2 - fh - 4, fw, fh);
+        }
       }
     }
 
     drawBalloon();
   }
 
+  // 「エサの時間だよー」の大きい吹き出し。画面右から吹き出し全体がスライドインし、
+  // 静止フェーズの間はその位置に留まる(#fx-layerに描画するので画面に固定され、カメラの影響を受けない)
+  const FOOD_BIG_SCALE = 1.2; // 2026-08-08: 0.75から拡大(「大きな吹き出しが小さい」という指摘のため)
+  const FOOD_SMALL_SCALE = 0.4;
+  function drawDuskCallBubble(ctx) {
+    if (!duskCallSeq || !foodBigImg) return;
+    const w = foodBigImg.width * FOOD_BIG_SCALE;
+    const h = foodBigImg.height * FOOD_BIG_SCALE;
+    const restX = BASE_W - w - 20;
+    let x;
+    if (duskCallSeq.phase === 'sliding') {
+      const t = Math.min(1, duskCallSeq.timer / DUSK_CALL_SLIDE_SEC);
+      const eased = 1 - Math.pow(1 - t, 3); // ease-out。「ニョキッと」入ってくる勢いを付ける
+      x = BASE_W - eased * (BASE_W - restX);
+    } else {
+      x = restX; // 静止フェーズはそのまま表示し続ける
+    }
+    ctx.drawImage(foodBigImg, x, 175, w, h); // yは右上のHUD(距離/ベスト/コイン)と被らない位置に調整
+  }
+
   function drawFx() {
     fctx.clearRect(0, 0, BASE_W, viewH);
     for (const h of hearts) drawHeart(fctx, h.x, h.y - camera.top, h.size, h.alpha);
     for (const p of popups) drawPopup(fctx, p);
+    drawDuskCallBubble(fctx);
   }
 
   // --- 昼/夕方の色フィルター(50mごとに交互。距離に応じてではなく、境界を跨いだ瞬間に
@@ -1558,11 +1609,49 @@
   // プレイヤーは画面内なら後退もできるため、境界付近を行き来すると生の距離では
   // 昼/夕方の目標が跨ぐたびに反転してしまい、フェードが始まっては巻き戻る「ちらつき」になっていた
   function updateDuskAmount(dt, distanceM) {
-    maxDuskDistanceM = Math.max(maxDuskDistanceM, distanceM);
+    // HUDの「距離: Xm」はMath.round()した値を表示している。ここも同じ丸め方にしておかないと、
+    // 例えば連続値が49.5の時点でHUDは既に「50」と表示するのに、切り替え判定は50.0にならないと
+    // 発動しない、というズレが生まれる(「50mで止まっていても発動しない」の原因だった)
+    maxDuskDistanceM = Math.max(maxDuskDistanceM, Math.round(distanceM));
     const target = computeDuskTarget(maxDuskDistanceM);
+    if (lastDuskTarget !== null && target !== lastDuskTarget) triggerDuskCall();
+    lastDuskTarget = target;
     const step = dt / DAYNIGHT_FADE_SEC;
     if (duskAmount < target) duskAmount = Math.min(target, duskAmount + step);
     else if (duskAmount > target) duskAmount = Math.max(target, duskAmount - step);
+  }
+
+  // 昼⇔夕方が切り替わった瞬間の「エサの時間だよー」演出。3段階で進行する。
+  // ①(0〜DUSK_CALL_SLIDE_SEC秒)画面右から大きい吹き出しがスライドインする。犬は普段通り動き、当たり判定もある
+  // ②(スライドイン完了後、DUSK_FREEZE_SEC秒)その時点にいた犬全員が「話を理解する」ため静止する。
+  //   このタイミングから当たり判定を切る(高速で動かす前に無敵にしておく)
+  // ③(静止が終わった瞬間)大きい吹き出しを消し、各犬の頭上に小さい吹き出しを出しつつ
+  //   DOG_FLEE_SPEED_MULTIPLIER倍速で画面の近い方の端へ走り去らせる(当たり判定は引き続き無し)
+  const DUSK_CALL_SLIDE_SEC = 0.2; // 大きい吹き出しがスライドインする時間
+  const DUSK_FREEZE_SEC = 0.8; // スライドイン完了後、犬が静止している時間
+  const DOG_FLEE_SPEED_MULTIPLIER = 1.5; // 2026-08-08: 3から引き下げ(「走る速さが早すぎた」という指摘のため)
+
+  function triggerDuskCall() {
+    duskCallSeq = { phase: 'sliding', timer: 0 };
+  }
+
+  function updateDuskCallSequence(dt) {
+    if (!duskCallSeq) return;
+    duskCallSeq.timer += dt;
+    if (duskCallSeq.phase === 'sliding' && duskCallSeq.timer >= DUSK_CALL_SLIDE_SEC) {
+      duskCallSeq.phase = 'frozen';
+      duskCallSeq.timer = 0;
+      for (const dog of dogs) dog.duskFrozen = true; // その時点にいた犬だけが対象
+    } else if (duskCallSeq.phase === 'frozen' && duskCallSeq.timer >= DUSK_FREEZE_SEC) {
+      for (const dog of dogs) {
+        if (!dog.duskFrozen) continue; // 静止フェーズの間に新しく湧いた犬は対象外
+        dog.duskFrozen = false;
+        dog.fleeing = true;
+        dog.dir = dog.worldX < BASE_W / 2 ? -1 : 1; // 画面の近い方の端へ
+        dog.speed *= DOG_FLEE_SPEED_MULTIPLIER;
+      }
+      duskCallSeq = null; // 演出終了。以降は既存のfleeing処理(端で退場)に任せる
+    }
   }
 
   // --- タブが非アクティブになったらBGMを止め、ゲーム全体も一時停止する ---
@@ -1601,6 +1690,7 @@
 
     const distanceM = Math.max(0, -player.worldY / LANE_H);
     updateDuskAmount(dt, distanceM);
+    updateDuskCallSequence(dt);
     daynightOverlayEl.style.opacity = duskAmount * DUSK_MAX_OPACITY;
     ensureDogPopulation(distanceM, camera.top);
     updateDogs(dt, distanceM);
